@@ -1,0 +1,121 @@
+# Everything runs in containers. The host needs only Docker.
+#
+# Volume strategy: source is bind-mounted so edits are live, but every
+# generated directory (node_modules, forge lib/out/cache) lives in a named
+# volume so it never lands on the host filesystem.
+name: wallet
+
+x-node-common: &node-common
+  build:
+    context: .
+    dockerfile: docker/node.Dockerfile
+  image: wallet-node:local
+  user: node
+  working_dir: /app
+  environment:
+    DATABASE_URL: postgres://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet}
+    RPC_URL: http://anvil:8545
+    CHAIN_ID: "31337"
+    NODE_ENV: development
+  volumes:
+    - ./:/app
+    - node_modules_root:/app/node_modules
+    - node_modules_api:/app/services/api/node_modules
+    - node_modules_shared:/app/packages/shared/node_modules
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wallet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wallet}
+      POSTGRES_DB: ${POSTGRES_DB:-wallet}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18+ wants the mount one level up, at /var/lib/postgresql, so
+      # the data ends up in a version-specific subdirectory and pg_upgrade can
+      # work across a single mount point.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wallet} -d ${POSTGRES_DB:-wallet}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # Local EVM chain. Deterministic mnemonic so test accounts are stable.
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    # The image entrypoint is `/bin/sh -c`, which would swallow every flag after
+    # the first word. Overriding the entrypoint and passing `--flag=value` args
+    # as a list keeps the shell out of it entirely.
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--port=8545"
+      - "--chain-id=31337"
+      - "--block-time=2"
+      - "--accounts=10"
+      - "--balance=10000"
+      - "--mnemonic=test test test test test test test test test test test junk"
+    ports:
+      - "${ANVIL_PORT:-8545}:8545"
+    healthcheck:
+      # Deliberately not 127.0.0.1: probing via the service name goes through
+      # the routable interface, so a loopback-only bind fails the healthcheck
+      # instead of silently passing.
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://anvil:8545"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  api:
+    <<: *node-common
+    command: npm run dev --workspace @wallet/api
+    ports:
+      - "${API_PORT:-3000}:3000"
+    healthcheck:
+      # Without this, `up --wait` reports the service healthy the moment the
+      # container starts, before the server is actually listening.
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      anvil:
+        condition: service_healthy
+
+  # One-shot helper containers. Not started by `up`; invoked via the Makefile.
+  node-tools:
+    <<: *node-common
+    profiles: ["tools"]
+    entrypoint: ["/bin/sh", "-c"]
+    command: "true"
+
+  forge:
+    build:
+      context: .
+      dockerfile: docker/foundry.Dockerfile
+    image: wallet-foundry:local
+    profiles: ["tools"]
+    working_dir: /app/contracts
+    environment:
+      RPC_URL: http://anvil:8545
+    volumes:
+      - ./:/app
+      - forge_lib:/app/contracts/lib
+      - forge_out:/app/contracts/out
+      - forge_cache:/app/contracts/cache
+    command: "forge --version"
+
+volumes:
+  pgdata:
+  node_modules_root:
+  node_modules_api:
+  node_modules_shared:
+  forge_lib:
+  forge_out:
+  forge_cache:
