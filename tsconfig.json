@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // TypeScript 7 removed `baseUrl`, so workspace packages are mapped with
+    // relative paths instead.
+    "paths": {
+      "@wallet/shared": ["./packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "services/*/src/**/*.ts"]
+}
