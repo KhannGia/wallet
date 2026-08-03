@@ -1,0 +1,16 @@
+{
+  "name": "@wallet/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts"
+  },
+  "dependencies": {
+    "@wallet/shared": "*",
+    "fastify": "^5.11.2",
+    "pg": "^8.22.0"
+  }
+}
