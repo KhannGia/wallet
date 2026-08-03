@@ -17,6 +17,7 @@ x-node-common: &node-common
     RPC_URL: http://anvil:8545
     CHAIN_ID: "31337"
     NODE_ENV: development
+    LOG_LEVEL: ${LOG_LEVEL:-info}
   volumes:
     - ./:/app
     - node_modules_root:/app/node_modules
