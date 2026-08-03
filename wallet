@@ -99,7 +99,9 @@ case "${1:-help}" in
         shift; forge_run "forge $*"
         ;;
     cast)
-        shift; forge_run "cast $* --rpc-url http://anvil:8545"
+        # No --rpc-url appended: the container sets ETH_RPC_URL, which cast
+        # picks up on its own, so offline subcommands still work.
+        shift; forge_run "cast $*"
         ;;
     accounts)
         "${DC[@]}" logs anvil | sed -n '/Available Accounts/,/Wallet/p'

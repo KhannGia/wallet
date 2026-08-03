@@ -105,6 +105,9 @@ services:
     working_dir: /app/contracts
     environment:
       RPC_URL: http://anvil:8545
+      # cast and forge read this automatically, so subcommands that take no
+      # --rpc-url flag (cast wallet new, forge fmt) still work unchanged.
+      ETH_RPC_URL: http://anvil:8545
     volumes:
       - ./:/app
       - forge_lib:/app/contracts/lib
