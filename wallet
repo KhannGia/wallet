@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+#
+# Task runner for the whole project. Everything executes inside Docker, so the
+# host needs Docker and nothing else -- no Node, no npm, no Foundry, no make.
+#
+#   ./wallet help
+#
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+DC=(docker compose)
+
+# Runs a shell command in the Node toolchain container. --no-deps because
+# installing or type-checking does not need Postgres or the chain running.
+node_tools() { "${DC[@]}" run --rm --no-deps node-tools "$*"; }
+
+# Runs a shell command in the Foundry container.
+forge_run() { "${DC[@]}" run --rm forge "$*"; }
+
+# Brings up the backing services and waits until they report healthy.
+need_services() { "${DC[@]}" up -d --wait postgres anvil; }
+
+usage() {
+    cat <<'EOF'
+Usage: ./wallet <command>
+
+Setup
+  install         Install all dependencies (npm + Solidity) into Docker volumes
+  install-node    Install npm workspace dependencies
+  install-forge   Install Solidity dependencies
+
+Runtime
+  up              Start the full stack in the background
+  dev             Start the stack and follow logs
+  down            Stop the stack, keeping volumes
+  restart         Restart the stack
+  logs [service]  Follow logs
+  ps              Show container status
+
+Checks
+  test            Run every test suite
+  test-node       Run backend tests (starts Postgres and anvil first)
+  test-forge      Run Solidity tests
+  typecheck       Type-check the whole workspace
+  fmt             Format Solidity sources
+  fmt-check       Verify Solidity formatting without writing
+
+Utilities
+  psql            Open a psql shell against the dev database
+  shell           Open a shell in the Node toolchain container
+  forge <args>    Run an arbitrary forge command
+  cast <args>     Run an arbitrary cast command against the local chain
+  accounts        Show the deterministic anvil test accounts
+
+Teardown
+  clean           Stop and delete dependency volumes (database is kept)
+  nuke            Stop and delete every volume, including the database
+EOF
+}
+
+case "${1:-help}" in
+    install)
+        node_tools "npm install"
+        forge_run "forge install --no-git foundry-rs/forge-std"
+        ;;
+    install-node)   node_tools "npm install" ;;
+    install-forge)  forge_run "forge install --no-git foundry-rs/forge-std" ;;
+
+    up)      "${DC[@]}" up -d --build --wait ;;
+    dev)     "${DC[@]}" up -d --build --wait && "${DC[@]}" logs -f ;;
+    down)    "${DC[@]}" down ;;
+    restart) "${DC[@]}" down && "${DC[@]}" up -d --build --wait ;;
+    logs)    shift; "${DC[@]}" logs -f "$@" ;;
+    ps)      "${DC[@]}" ps ;;
+
+    test)
+        need_services
+        node_tools "npm test"
+        forge_run "forge test -vv"
+        ;;
+    test-node)
+        need_services
+        node_tools "npm test"
+        ;;
+    test-forge) forge_run "forge test -vv" ;;
+    typecheck)  node_tools "npm run typecheck" ;;
+    fmt)        forge_run "forge fmt" ;;
+    fmt-check)  forge_run "forge fmt --check" ;;
+
+    psql)
+        "${DC[@]}" exec postgres \
+            psql -U "${POSTGRES_USER:-wallet}" -d "${POSTGRES_DB:-wallet}"
+        ;;
+    shell)
+        "${DC[@]}" run --rm --no-deps --entrypoint /bin/bash node-tools
+        ;;
+    forge)
+        shift; forge_run "forge $*"
+        ;;
+    cast)
+        shift; forge_run "cast $* --rpc-url http://anvil:8545"
+        ;;
+    accounts)
+        "${DC[@]}" logs anvil | sed -n '/Available Accounts/,/Wallet/p'
+        ;;
+
+    clean)
+        "${DC[@]}" down
+        docker volume rm -f \
+            wallet_node_modules_root wallet_node_modules_api \
+            wallet_node_modules_shared wallet_forge_lib \
+            wallet_forge_out wallet_forge_cache
+        ;;
+    nuke)
+        "${DC[@]}" down -v
+        ;;
+
+    help|-h|--help) usage ;;
+    *)
+        echo "Unknown command: $1" >&2
+        echo >&2
+        usage >&2
+        exit 1
+        ;;
+esac
