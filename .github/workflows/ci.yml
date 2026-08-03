@@ -12,7 +12,14 @@ jobs:
     name: Solidity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      # The toolchain containers run as uid 1000, but the runner checks the
+      # repository out as uid 1001. Without this, any container write to a
+      # bind-mounted path (npm updating the lockfile) fails with EACCES.
+      # Local machines usually do not hit this because the developer is uid 1000.
+      - name: Align checkout ownership with the container user
+        run: sudo chown -R 1000:1000 .
 
       - name: Install Solidity dependencies
         run: ./wallet install-forge
@@ -29,7 +36,14 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      # The toolchain containers run as uid 1000, but the runner checks the
+      # repository out as uid 1001. Without this, any container write to a
+      # bind-mounted path (npm updating the lockfile) fails with EACCES.
+      # Local machines usually do not hit this because the developer is uid 1000.
+      - name: Align checkout ownership with the container user
+        run: sudo chown -R 1000:1000 .
 
       - name: Install dependencies
         run: ./wallet install-node
