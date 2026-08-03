@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# CI runs the exact same containers as local development, so a green pipeline
+# means the stack genuinely works -- not that some bespoke CI environment does.
+jobs:
+  solidity:
+    name: Solidity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Solidity dependencies
+        run: ./wallet install-forge
+
+      - name: Check formatting
+        run: ./wallet fmt-check
+
+      - name: Run tests
+        run: ./wallet test-forge
+        env:
+          FOUNDRY_PROFILE: ci
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: ./wallet install-node
+
+      - name: Type-check
+        run: ./wallet typecheck
+
+      # Brings up Postgres and anvil, then runs the suite against them.
+      - name: Run tests
+        run: ./wallet test-node
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs
