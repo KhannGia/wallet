@@ -1,0 +1,32 @@
+# Secrets. Nothing resembling a key or mnemonic is ever committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+keystore/
+
+# Node. These live in Docker volumes and should not appear on the host at all;
+# the entries are a safety net in case someone runs npm outside a container.
+node_modules/
+npm-debug.log*
+.npm/
+
+# Foundry. Also volume-backed.
+contracts/lib/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+!contracts/broadcast/**/dry-run/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local scratch
+*.log
+tmp/
+coverage/
+lcov.info
