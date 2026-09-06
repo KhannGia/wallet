@@ -11,7 +11,7 @@
     "services/*"
   ],
   "scripts": {
-    "test": "node --test \"packages/*/src/**/*.test.ts\" \"services/*/src/**/*.test.ts\"",
+    "test": "node --test --test-concurrency=1 \"packages/*/src/**/*.test.ts\" \"services/*/src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
