@@ -46,6 +46,10 @@ Checks
   fmt             Format Solidity sources
   fmt-check       Verify Solidity formatting without writing
 
+Database
+  migrate         Apply pending migrations
+  db-reset        Drop the schema and re-apply every migration (destroys data)
+
 Utilities
   psql            Open a psql shell against the dev database
   shell           Open a shell in the Node toolchain container
@@ -85,6 +89,21 @@ case "${1:-help}" in
         ;;
     test-forge) forge_run "forge test -vv" ;;
     typecheck)  node_tools "npm run typecheck" ;;
+
+    migrate)
+        need_services
+        node_tools "npm run migrate --workspace @wallet/api"
+        ;;
+    db-reset)
+        # Drops the schema outright and rebuilds it. Development only: this
+        # destroys every row, which is why it is a separate command from
+        # migrate rather than a flag on it.
+        need_services
+        "${DC[@]}" exec -T postgres psql -U "${POSTGRES_USER:-wallet}" \
+            -d "${POSTGRES_DB:-wallet}" -q \
+            -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+        node_tools "npm run migrate --workspace @wallet/api"
+        ;;
     fmt)        forge_run "forge fmt" ;;
     fmt-check)  forge_run "forge fmt --check" ;;
 

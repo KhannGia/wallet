@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "node --watch src/index.ts",
-    "start": "node src/index.ts"
+    "start": "node src/index.ts",
+    "migrate": "node src/db/migrate-cli.ts"
   },
   "dependencies": {
     "@wallet/shared": "*",
