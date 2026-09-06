@@ -1,8 +1,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { Pool } from "pg";
 import { createPublicClient, http } from "viem";
 
 import { loadEnv, type Env } from "@wallet/shared";
+
+import { createPool, type Pool } from "./db/pool.ts";
+import { registerErrorHandler } from "./routes/errors.ts";
+import { registerLedgerRoutes } from "./routes/ledger.ts";
 
 export interface AppDeps {
   env: Env;
@@ -13,7 +16,7 @@ export interface AppDeps {
 export function createDeps(env: Env = loadEnv()): AppDeps {
   return {
     env,
-    pool: new Pool({ connectionString: env.DATABASE_URL, max: 10 }),
+    pool: createPool(env.DATABASE_URL),
     chain: createPublicClient({ transport: http(env.RPC_URL) }),
   };
 }
@@ -52,6 +55,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const ready = database.ok && chain.ok;
     return reply.code(ready ? 200 : 503).send({ ready, checks: { database, chain } });
   });
+
+  registerErrorHandler(app);
+  registerLedgerRoutes(app, deps.pool);
 
   return app;
 }
