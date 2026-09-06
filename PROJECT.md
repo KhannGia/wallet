@@ -360,5 +360,3 @@ are what make this project different from every other exchange clone.
 3. A multi-sig attack test file where every case is a vulnerability that has
    drained real funds.
 4. Proof of Reserves with a Merkle proof any user can verify themselves.
-
-//
