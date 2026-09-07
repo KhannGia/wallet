@@ -46,6 +46,9 @@ Checks
   fmt             Format Solidity sources
   fmt-check       Verify Solidity formatting without writing
 
+Wallet
+  keygen          Generate an HD wallet offline (prints a mnemonic once)
+
 Database
   migrate         Apply pending migrations
   db-reset        Drop the schema and re-apply every migration (destroys data)
@@ -90,6 +93,11 @@ case "${1:-help}" in
     test-forge) forge_run "forge test -vv" ;;
     typecheck)  node_tools "npm run typecheck" ;;
 
+    keygen)
+        # Offline: generates a mnemonic and its xpub. Nothing is written to
+        # disk, and no service needs to be running.
+        node_tools "npm run keygen --workspace @wallet/api"
+        ;;
     migrate)
         need_services
         node_tools "npm run migrate --workspace @wallet/api"
