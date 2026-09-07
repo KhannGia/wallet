@@ -35,6 +35,25 @@ describe("ledger API", () => {
         await deps.pool.end();
     });
 
+    it("returns a deposit address when an account is created", async () => {
+        const response = await app.inject({
+            method: "POST",
+            url: "/api/v1/users",
+            payload: { email: "addr@test.local" },
+        });
+        const created = response.json();
+
+        assert.equal(response.statusCode, 201);
+        assert.match(created.depositAddress, /^0x[0-9a-fA-F]{40}$/);
+
+        // The same address must be readable back on the account.
+        const account = await app.inject({
+            method: "GET",
+            url: `/api/v1/accounts/${created.accountId}`,
+        });
+        assert.equal(account.json().depositAddress, created.depositAddress);
+    });
+
     it("rejects a money-moving request without an Idempotency-Key", async () => {
         const accountId = await createAccount("nokey@test.local");
 
