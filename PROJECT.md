@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P1 — off-chain ledger complete. See [Roadmap](#part-iii--roadmap).
+**Status:** P2 — HD deposit addresses complete. See [Roadmap](#part-iii--roadmap).
 
 ---
 
@@ -291,7 +291,7 @@ demonstrable.
 | ------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---- |
 | ~~**P0**~~ | Monorepo, Foundry + anvil, Postgres, CI running `forge test` and backend tests, everything in Docker            | Done: `./wallet up` brings the whole stack up locally               | 2    |
 | ~~**P1**~~ | Off-chain ledger: double-entry, accounts, idempotency keys, `SELECT FOR UPDATE`, ordered locking                | Done: interleaved-transaction test fails without the lock; `SUM = 0` holds | 5 |
-| **P2** | HD wallet (BIP-44), derive addresses from xpub, API server never touches a private key                          | Every user gets a deposit address; no keys in the database          | 3    |
+| ~~**P2**~~ | HD wallet (BIP-44), derive addresses from xpub, API server never touches a private key                      | Done: addresses match anvil's published vector; xprv rejected at load | 3  |
 | **P3** | Indexer: scan blocks, catch USDC `Transfer` events, resume from `last_scanned_block`                            | Send USDC on anvil -> balance appears in the app                    | 5    |
 | **P4** | **Reorg + finality**: pending vs available balance, `finalized` block tag, re-verify recent block hashes, reversing entries | `anvil_reorg` -> deposit rolls back correctly, ledger stays balanced | 4    |
 

@@ -12,9 +12,10 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P1 — off-chain ledger.** Double-entry postings, idempotent money
-movement and row-level locking are in place and covered by tests, including one that
-provably fails if the locking is removed. On-chain settlement starts in P3.
+**Current status: P2 — HD deposit addresses.** On top of the P1 ledger, every user
+now gets their own on-chain deposit address derived from an extended public key, so
+the API server can generate addresses without holding anything that can spend.
+Watching the chain for incoming deposits starts in P3.
 
 ## Requirements
 
@@ -52,6 +53,7 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet dev`      | Same, then follow logs                                 |
 | `./wallet test`     | Backend tests and Solidity tests                       |
 | `./wallet typecheck`| Type-check the workspace                               |
+| `./wallet keygen`   | Generate an HD wallet offline (prints a mnemonic once)  |
 | `./wallet migrate`  | Apply pending database migrations                      |
 | `./wallet db-reset` | Drop the schema and re-apply migrations (destroys data)|
 | `./wallet psql`     | psql shell against the dev database                    |
@@ -80,6 +82,28 @@ curl -s -X POST $BASE/deposits -H 'content-type: application/json' \
 # The ledger must always sum to zero.
 curl -s $BASE/admin/reconciliation
 ```
+
+## What P2 demonstrates
+
+**The server derives addresses it cannot spend from.** `./wallet keygen` runs
+offline and is the only code that ever holds a private key. It prints a
+mnemonic once, writes nothing to disk, and emits the extended *public* key at
+`m/44'/60'/0'/0`. Only that xpub is deployed. `loadWatchOnlyKey` refuses an
+xprv and refuses a key at the wrong depth, so a misconfiguration fails at
+startup instead of quietly granting spending authority.
+
+**Addresses are checked against an independent source.** The tests derive from
+the public Foundry mnemonic and compare against the addresses anvil prints in
+its own startup banner. That matters because the two ways to get this wrong --
+passing a compressed public key to `publicKeyToAddress`, or deriving from the
+wrong depth -- both produce valid-looking addresses that nobody holds keys to.
+Only comparison against a known vector catches them.
+
+**Indices come from a sequence, not `MAX(index) + 1`.** `nextval` is safe under
+concurrency without taking a lock. The alternative would hand two simultaneous
+signups the same address, silently merging two users' deposits into one
+balance. A test creates 25 accounts at once and asserts every index and address
+is distinct.
 
 ## What P1 demonstrates
 
@@ -116,6 +140,7 @@ services/api/       REST API
   src/db/           Connection pool and the migration runner
   src/ledger/       Double-entry core, idempotency, operations
   src/routes/       HTTP layer
+  src/wallet/       Offline key generation (never runs in the server)
 wallet              Task runner -- the entry point for everything
 ```
 
@@ -147,7 +172,13 @@ instead of turning up root-owned.
 ## Secrets
 
 `.env` is gitignored and holds local development defaults only. No private key,
-mnemonic or API key ever belongs in this repository. The anvil mnemonic in
+mnemonic or API key ever belongs in this repository.
+
+`WALLET_XPUB` is an extended *public* key and is safe to deploy: it derives
+deposit addresses and cannot move funds. The default in `.env.example` belongs
+to the public Foundry test mnemonic. Generate your own with `./wallet keygen`,
+and keep the mnemonic it prints offline -- it is never written to disk, and
+losing it loses the funds. The anvil mnemonic in
 `docker-compose.yml` is the well-known public Foundry test mnemonic and controls
 nothing of value.
 
