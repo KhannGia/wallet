@@ -8,6 +8,11 @@ import { z } from "zod";
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   RPC_URL: z.string().min(1),
+
+  // Extended PUBLIC key only. loadWatchOnlyKey rejects an xprv, so a
+  // misconfiguration here fails at startup rather than quietly giving the API
+  // server spending authority over every deposit address.
+  WALLET_XPUB: z.string().min(1),
   CHAIN_ID: z.coerce.number().int().positive().default(31337),
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),

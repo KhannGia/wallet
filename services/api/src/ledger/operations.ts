@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
+import { deriveDepositAddress } from "@wallet/shared";
+
 import { one } from "../db/pool.ts";
 import { AccountNotFound } from "./errors.ts";
 import { runIdempotent, type IdempotentOutcome } from "./idempotency.ts";
@@ -29,28 +31,66 @@ async function systemAccountId(client: PoolClient, key: string): Promise<bigint>
     return row.id;
 }
 
+export interface CreatedUser {
+    userId: string;
+    accountId: string;
+    depositAddress: string;
+    derivationIndex: string;
+}
+
 export async function createUser(
     pool: Pool,
-    email: string,
-): Promise<{ userId: string; accountId: string }> {
+    params: { email: string; xpub: string },
+): Promise<CreatedUser> {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
+
         const user = one(
-            (await client.query<{ id: bigint }>("INSERT INTO users (email) VALUES ($1) RETURNING id", [email])).rows,
+            (
+                await client.query<{ id: bigint }>(
+                    "INSERT INTO users (email) VALUES ($1) RETURNING id",
+                    [params.email],
+                )
+            ).rows,
             "user",
         );
+
+        // nextval is safe under concurrency without a lock, so two signups
+        // landing at the same instant can never share a derivation index --
+        // which would mean two users sharing one deposit address, and their
+        // funds becoming indistinguishable.
+        const allocated = one(
+            (
+                await client.query<{ index: bigint }>(
+                    "SELECT nextval('deposit_address_index_seq') AS index",
+                )
+            ).rows,
+            "derivation index",
+        );
+
+        const derivationIndex = Number(allocated.index);
+        const depositAddress = deriveDepositAddress(params.xpub, derivationIndex);
+
         const account = one(
             (
                 await client.query<{ id: bigint }>(
-                    "INSERT INTO accounts (user_id, type) VALUES ($1, 'USER') RETURNING id",
-                    [user.id],
+                    `INSERT INTO accounts (user_id, type, derivation_index, deposit_address)
+                     VALUES ($1, 'USER', $2, $3)
+                     RETURNING id`,
+                    [user.id, allocated.index, depositAddress],
                 )
             ).rows,
             "account",
         );
+
         await client.query("COMMIT");
-        return { userId: String(user.id), accountId: String(account.id) };
+        return {
+            userId: String(user.id),
+            accountId: String(account.id),
+            depositAddress,
+            derivationIndex: String(allocated.index),
+        };
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -150,13 +190,23 @@ export async function transfer(
 export async function getAccount(
     pool: Pool,
     accountId: bigint,
-): Promise<{ id: string; type: string; balance: string; currency: string }> {
+): Promise<{
+    id: string;
+    type: string;
+    balance: string;
+    currency: string;
+    depositAddress: string | null;
+}> {
     const { rows } = await pool.query<{
         id: bigint;
         type: string;
         balance: bigint;
         currency: string;
-    }>("SELECT id, type, balance, currency FROM accounts WHERE id = $1", [accountId]);
+        deposit_address: string | null;
+    }>(
+        "SELECT id, type, balance, currency, deposit_address FROM accounts WHERE id = $1",
+        [accountId],
+    );
 
     const account = rows[0];
     if (account === undefined) {
@@ -168,6 +218,7 @@ export async function getAccount(
         type: account.type,
         balance: String(account.balance),
         currency: account.currency,
+        depositAddress: account.deposit_address,
     };
 }
 

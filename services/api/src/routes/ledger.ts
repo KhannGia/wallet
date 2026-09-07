@@ -33,10 +33,10 @@ function requireIdempotencyKey(request: FastifyRequest): string {
     return key;
 }
 
-export function registerLedgerRoutes(app: FastifyInstance, pool: Pool): void {
+export function registerLedgerRoutes(app: FastifyInstance, pool: Pool, xpub: string): void {
     app.post("/api/v1/users", async (request, reply) => {
         const { email } = createUserSchema.parse(request.body);
-        return reply.code(201).send(await createUser(pool, email));
+        return reply.code(201).send(await createUser(pool, { email, xpub }));
     });
 
     app.get("/api/v1/accounts/:id", async (request) => {

@@ -1,8 +1,16 @@
-import { loadEnv } from "@wallet/shared";
+import { loadEnv, xpubFromMnemonic } from "@wallet/shared";
 
 import { createPool, type Pool } from "../db/pool.ts";
 import { migrate } from "../db/migrate.ts";
 import { reconcile } from "../ledger/operations.ts";
+
+/**
+ * The public Foundry test mnemonic. Its xpub is fine to hardcode here: the
+ * mnemonic is published in anvil's own banner and controls nothing.
+ */
+export const TEST_XPUB = xpubFromMnemonic(
+    "test test test test test test test test test test test junk",
+);
 
 export function testPool(): Pool {
     return createPool(loadEnv({ ...process.env, LOG_LEVEL: "error" }).DATABASE_URL);
@@ -19,6 +27,9 @@ export function testPool(): Pool {
 export async function resetDatabase(pool: Pool): Promise<void> {
     await migrate(pool);
     await pool.query("TRUNCATE ledger_entries, transactions, accounts, users RESTART IDENTITY CASCADE");
+    // TRUNCATE ... RESTART IDENTITY only resets sequences owned by the table's
+    // own serial columns, not a standalone one, so it is restarted explicitly.
+    await pool.query("ALTER SEQUENCE deposit_address_index_seq RESTART WITH 0");
     await pool.query(
         `INSERT INTO accounts (type, system_key)
          VALUES ('SYSTEM', 'BANK_GATEWAY'), ('SYSTEM', 'FEE_REVENUE')`,
@@ -36,28 +47,20 @@ export async function assertBalanced(pool: Pool): Promise<void> {
 }
 
 export async function seedAccount(pool: Pool, email: string, balance: bigint): Promise<bigint> {
-    const { rows: userRows } = await pool.query<{ id: bigint }>(
-        "INSERT INTO users (email) VALUES ($1) RETURNING id",
-        [email],
-    );
-    const user = userRows[0];
-    if (user === undefined) throw new Error("failed to seed user");
-
-    const { rows: accountRows } = await pool.query<{ id: bigint }>(
-        "INSERT INTO accounts (user_id, type) VALUES ($1, 'USER') RETURNING id",
-        [user.id],
-    );
-    const account = accountRows[0];
-    if (account === undefined) throw new Error("failed to seed account");
+    // Goes through createUser rather than raw INSERTs so seeded accounts get a
+    // derivation index and deposit address like real ones, and the schema
+    // constraints are exercised by the tests too.
+    const { createUser, deposit } = await import("../ledger/operations.ts");
+    const created = await createUser(pool, { email, xpub: TEST_XPUB });
+    const accountId = BigInt(created.accountId);
 
     if (balance > 0n) {
-        const { deposit } = await import("../ledger/operations.ts");
         await deposit(pool, {
-            accountId: account.id,
+            accountId,
             amount: balance,
-            idempotencyKey: `seed-${account.id}-${balance}`,
+            idempotencyKey: `seed-${accountId}-${balance}`,
         });
     }
 
-    return account.id;
+    return accountId;
 }
