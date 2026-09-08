@@ -56,6 +56,15 @@ jobs:
       - name: Install dependencies
         run: ./wallet install-node
 
+      # The indexer tests deploy a contract on anvil and read its bytecode from
+      # the Foundry artifact directory, so the contracts must be compiled before
+      # the backend suite runs -- even though this job is otherwise unrelated to
+      # Solidity.
+      - name: Compile contracts
+        run: |
+          ./wallet install-forge
+          ./wallet forge build
+
       - name: Type-check
         run: ./wallet typecheck
 
