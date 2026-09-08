@@ -24,6 +24,9 @@ x-node-common: &node-common
     - node_modules_root:/app/node_modules
     - node_modules_api:/app/services/api/node_modules
     - node_modules_shared:/app/packages/shared/node_modules
+    # Compiled contract artifacts, read-only. The backend needs the ABI to
+    # decode logs, and forge is the only thing that should ever write here.
+    - forge_out:/app/contracts/out:ro
 
 services:
   postgres:
