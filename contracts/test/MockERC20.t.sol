@@ -37,7 +37,9 @@ contract MockERC20Test is Test {
         emit Transfer(alice, bob, 400_000);
 
         vm.prank(alice);
-        token.transfer(bob, 400_000);
+        // Returning true is part of the ERC-20 contract, so it is asserted
+        // rather than discarded.
+        assertTrue(token.transfer(bob, 400_000));
 
         assertEq(token.balanceOf(alice), 600_000);
         assertEq(token.balanceOf(bob), 400_000);
@@ -50,6 +52,7 @@ contract MockERC20Test is Test {
         vm.expectRevert(
             abi.encodeWithSelector(MockERC20.InsufficientBalance.selector, alice, 100, 101)
         );
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
         token.transfer(bob, 101);
     }
 
@@ -58,7 +61,7 @@ contract MockERC20Test is Test {
         token.mint(alice, minted);
 
         vm.prank(alice);
-        token.transfer(bob, sent);
+        assertTrue(token.transfer(bob, sent));
 
         assertEq(token.balanceOf(alice) + token.balanceOf(bob), token.totalSupply());
     }
