@@ -12,10 +12,11 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P2 — HD deposit addresses.** On top of the P1 ledger, every user
-now gets their own on-chain deposit address derived from an extended public key, so
-the API server can generate addresses without holding anything that can spend.
-Watching the chain for incoming deposits starts in P3.
+**Current status: P3 in progress — reading the chain.** The pieces that observe
+the chain are in place: a devnet ERC-20 to watch, a log scanner that finds
+transfers into deposit addresses, and a durable cursor so a restart resumes
+where it left off. Nothing is credited to the ledger yet, and reorg handling is
+P4.
 
 ## Requirements
 
@@ -83,6 +84,30 @@ curl -s -X POST $BASE/deposits -H 'content-type: application/json' \
 curl -s $BASE/admin/reconciliation
 ```
 
+## What the P3 slice demonstrates so far
+
+**The scanner asks the node to filter, not JavaScript.** `fetchIncomingTransfers`
+passes the watched addresses as the indexed `to` topic, so the response stays
+small however busy the token is. It also short-circuits an empty address list:
+an empty topic filter matches *every* transfer rather than none, so a wallet
+with no accounts would otherwise ingest the token's entire traffic.
+
+**Scanning happens in bounded chunks.** Nodes cap how many blocks one
+`eth_getLogs` may span. A test scans the same range whole and one block at a
+time and asserts both produce an identical set, so the chunking cannot quietly
+drop or duplicate a log.
+
+**The cursor only moves forward.** `advanceCursor` uses `GREATEST`, so a stale
+or out-of-order result cannot rewind the indexer and cause a range to be
+credited twice. Rewinding after a reorg is a separate, deliberate operation,
+which is what P4 adds. A missing cursor resumes from a configured start block
+rather than from "now" -- the latter would silently skip every deposit that
+arrived while the indexer was down.
+
+**Each transfer carries its block hash.** Not needed to credit a deposit, but
+required to notice later that the block it arrived in is no longer on the
+canonical chain.
+
 ## What P2 demonstrates
 
 **The server derives addresses it cannot spend from.** `./wallet keygen` runs
@@ -132,7 +157,7 @@ the deterministic one exists.
 ## Layout
 
 ```
-contracts/          Foundry: vault, smart account, paymaster (P7 onward)
+contracts/          Foundry: devnet mock token now; vault and smart account from P7
 db/migrations/      SQL migrations, applied in filename order
 docker/             Dockerfiles for the Node and Foundry toolchains
 packages/shared/    Shared config, chain definitions, money helpers
@@ -141,6 +166,7 @@ services/api/       REST API
   src/ledger/       Double-entry core, idempotency, operations
   src/routes/       HTTP layer
   src/wallet/       Offline key generation (never runs in the server)
+  src/chain/        Log scanning and the scanner cursor
 wallet              Task runner -- the entry point for everything
 ```
 

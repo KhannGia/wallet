@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P2 — HD deposit addresses complete. See [Roadmap](#part-iii--roadmap).
+**Status:** P2 complete; P3 in progress (chain reading done, ledger crediting next). See [Roadmap](#part-iii--roadmap).
 
 ---
 
