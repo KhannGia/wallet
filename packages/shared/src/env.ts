@@ -17,12 +17,22 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+
 });
 
 export type Env = z.infer<typeof envSchema>;
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = envSchema.safeParse(source);
+  // A variable that is simply not set reaches a process as an empty string
+  // rather than as absent: `.env` files carry blank placeholders, and Docker
+  // Compose turns `${VAR:-}` into "". Left alone, an empty value is validated
+  // as if it were a real one, so a blank optional field fails the schema and
+  // the service refuses to start -- including the migration runner.
+  const provided = Object.fromEntries(
+    Object.entries(source).filter(([, value]) => value !== ""),
+  );
+
+  const parsed = envSchema.safeParse(provided);
 
   if (!parsed.success) {
     const details = parsed.error.issues
