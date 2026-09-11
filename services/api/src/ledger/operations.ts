@@ -4,6 +4,7 @@ import { deriveDepositAddress } from "@wallet/shared";
 
 import { one } from "../db/pool.ts";
 import { AccountNotFound } from "./errors.ts";
+import { pendingBalance } from "./deposits.ts";
 import { runIdempotent, type IdempotentOutcome } from "./idempotency.ts";
 import { postEntries } from "./postings.ts";
 
@@ -196,6 +197,7 @@ export async function getAccount(
     balance: string;
     currency: string;
     depositAddress: string | null;
+    pendingBalance: string;
 }> {
     const { rows } = await pool.query<{
         id: bigint;
@@ -216,9 +218,12 @@ export async function getAccount(
     return {
         id: String(account.id),
         type: account.type,
+        // Spendable. Deposits seen on-chain but not yet final are reported
+        // separately, because the block they arrived in can still be replaced.
         balance: String(account.balance),
         currency: account.currency,
         depositAddress: account.deposit_address,
+        pendingBalance: String(await pendingBalance(pool, accountId)),
     };
 }
 

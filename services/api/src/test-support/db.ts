@@ -27,14 +27,15 @@ export function testPool(): Pool {
 export async function resetDatabase(pool: Pool): Promise<void> {
     await migrate(pool);
     await pool.query(
-        "TRUNCATE ledger_entries, transactions, accounts, users, indexer_state RESTART IDENTITY CASCADE",
+        "TRUNCATE chain_deposits, ledger_entries, transactions, accounts, users, indexer_state "
+            + "RESTART IDENTITY CASCADE",
     );
     // TRUNCATE ... RESTART IDENTITY only resets sequences owned by the table's
     // own serial columns, not a standalone one, so it is restarted explicitly.
     await pool.query("ALTER SEQUENCE deposit_address_index_seq RESTART WITH 0");
     await pool.query(
         `INSERT INTO accounts (type, system_key)
-         VALUES ('SYSTEM', 'BANK_GATEWAY'), ('SYSTEM', 'FEE_REVENUE')`,
+         VALUES ('SYSTEM', 'BANK_GATEWAY'), ('SYSTEM', 'FEE_REVENUE'), ('SYSTEM', 'PENDING_DEPOSITS')`,
     );
 }
 
