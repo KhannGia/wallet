@@ -12,11 +12,11 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P3 in progress — reading the chain.** The pieces that observe
-the chain are in place: a devnet ERC-20 to watch, a log scanner that finds
-transfers into deposit addresses, and a durable cursor so a restart resumes
-where it left off. Nothing is credited to the ledger yet, and reorg handling is
-P4.
+**Current status: P3 complete — on-chain deposits.** The indexer watches the
+chain, parks an incoming transfer until its block is final, then releases it to
+the depositor. A user's balance always means "spendable"; anything still
+reorg-able is reported separately as pending. Undoing a deposit whose block was
+replaced is P4.
 
 ## Requirements
 
@@ -55,6 +55,8 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet test`     | Backend tests and Solidity tests                       |
 | `./wallet typecheck`| Type-check the workspace                               |
 | `./wallet keygen`   | Generate an HD wallet offline (prints a mnemonic once)  |
+| `./wallet deploy-token` | Deploy the devnet ERC-20 and print its address     |
+| `./wallet indexer`  | Watch the chain and credit deposits                    |
 | `./wallet migrate`  | Apply pending database migrations                      |
 | `./wallet db-reset` | Drop the schema and re-apply migrations (destroys data)|
 | `./wallet psql`     | psql shell against the dev database                    |
@@ -84,7 +86,32 @@ curl -s -X POST $BASE/deposits -H 'content-type: application/json' \
 curl -s $BASE/admin/reconciliation
 ```
 
-## What the P3 slice demonstrates so far
+## Watching a deposit arrive
+
+```bash
+./wallet up
+./wallet deploy-token          # prints USDC_ADDRESS=0x...; paste it into .env
+./wallet indexer               # in another terminal
+
+ACCOUNT=$(curl -s -X POST localhost:3000/api/v1/users \
+    -H 'content-type: application/json' -d '{"email":"a@example.com"}')
+echo "$ACCOUNT"                # note depositAddress and accountId
+
+# Send tokens to that deposit address, then watch the balance.
+./wallet cast "send $USDC_ADDRESS 'mint(address,uint256)' <depositAddress> 250000000 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+curl -s localhost:3000/api/v1/accounts/<accountId>
+```
+
+The deposit appears first as `pendingBalance` and moves into `balance` once its
+block is final. Raise `FINALITY_CONFIRMATIONS` to watch it sit in pending for
+longer.
+
+Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
+every deployment is lost and `USDC_ADDRESS` has to be set again.
+
+## What P3 demonstrates
 
 **The scanner asks the node to filter, not JavaScript.** `fetchIncomingTransfers`
 passes the watched addresses as the indexed `to` topic, so the response stays
@@ -107,6 +134,28 @@ arrived while the indexer was down.
 **Each transfer carries its block hash.** Not needed to credit a deposit, but
 required to notice later that the block it arrived in is no longer on the
 canonical chain.
+
+**A deposit takes two steps, and the split is the point.** While its block can
+still be reorganised away the money sits in the `PENDING_DEPOSITS` system
+account and the user's balance does not move. Only once the block is final is
+it released to them. So a balance always means "spendable", and undoing a
+reorged deposit never has to claw funds back from someone who already spent
+them.
+
+**The chain supplies the idempotency key.** A log's `(transactionHash,
+logIndex)` is unique by definition, so rescanning a range -- which happens on
+every restart -- cannot credit the same transfer twice. No key has to be
+invented for it.
+
+**Finality is configurable because devnets have none.** `finalized` is correct
+on a real network. anvil pins its `finalized` tag to genesis forever, so a
+devnet must count confirmations instead or nothing would ever be credited. The
+default is the safe one, and a devnet opts out explicitly.
+
+**The cursor advances only after a range is recorded.** Advancing first and
+crashing would skip those deposits permanently. Recording first and crashing
+merely rescans, which is harmless. At-least-once is the only safe direction to
+fail in.
 
 ## What P2 demonstrates
 
@@ -166,7 +215,7 @@ services/api/       REST API
   src/ledger/       Double-entry core, idempotency, operations
   src/routes/       HTTP layer
   src/wallet/       Offline key generation (never runs in the server)
-  src/chain/        Log scanning and the scanner cursor
+  src/chain/        Log scanning, the cursor, finality and the indexer loop
 wallet              Task runner -- the entry point for everything
 ```
 
