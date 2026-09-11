@@ -49,6 +49,10 @@ Checks
 Wallet
   keygen          Generate an HD wallet offline (prints a mnemonic once)
 
+Indexer
+  deploy-token    Deploy the devnet ERC-20 and print its address (local only)
+  indexer         Watch the chain and credit deposits (Ctrl+C to stop)
+
 Database
   migrate         Apply pending migrations
   db-reset        Drop the schema and re-apply every migration (destroys data)
@@ -93,6 +97,22 @@ case "${1:-help}" in
     test-forge) forge_run "forge test -vv" ;;
     typecheck)  node_tools "npm run typecheck" ;;
 
+    deploy-token)
+        # Devnet only. The key below is anvil's first account, printed in its
+        # own banner; on a real network the wallet watches USDC and deploys
+        # nothing.
+        need_services
+        "${DC[@]}" run --rm forge \
+            "forge script script/DeployMockUsdc.s.sol:DeployMockUsdc --broadcast \
+             --rpc-url http://anvil:8545 \
+             --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
+            | sed -n 's/^token: contract MockERC20 \(0x[0-9a-fA-F]*\)/USDC_ADDRESS=\1/p'
+        ;;
+    indexer)
+        need_services
+        "${DC[@]}" run --rm --service-ports node-tools \
+            "npm run indexer --workspace @wallet/api"
+        ;;
     keygen)
         # Offline: generates a mnemonic and its xpub. Nothing is written to
         # disk, and no service needs to be running.

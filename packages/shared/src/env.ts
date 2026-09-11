@@ -18,6 +18,30 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
+  // --- Indexer. Unused by the API server, which is why these are optional. ---
+
+  /** The ERC-20 the indexer watches. On a real network, USDC. */
+  USDC_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "USDC_ADDRESS must be a 20-byte hex address")
+    .optional(),
+
+  /** Where a fresh indexer begins. Never "now": that skips history silently. */
+  INDEXER_START_BLOCK: z
+    .string()
+    .regex(/^\d+$/)
+    .default("0")
+    .transform((value) => BigInt(value)),
+
+  /**
+   * Defaults to the consensus-finalised block, which is the safe answer on a
+   * real network. Devnets have no consensus layer -- anvil pins `finalized` to
+   * genesis forever -- so they must opt into counting confirmations instead.
+   */
+  FINALITY_MODE: z.enum(["finalized", "confirmations"]).default("finalized"),
+  FINALITY_CONFIRMATIONS: z.coerce.number().int().positive().default(3),
+
+  INDEXER_POLL_MS: z.coerce.number().int().positive().default(4000),
 });
 
 export type Env = z.infer<typeof envSchema>;
