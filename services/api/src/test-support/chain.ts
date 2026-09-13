@@ -2,15 +2,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { localChain } from "@wallet/shared";
-import {
-    createPublicClient,
-    createWalletClient,
-    http,
-    type Address,
-    type PublicClient,
-    type WalletClient,
-} from "viem";
+import { createWalletClient, http, type Address, type PublicClient, type WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+
+import { createChainClient } from "../chain/client.ts";
 
 /**
  * anvil's first account. This key is printed in anvil's own banner and is
@@ -52,7 +47,9 @@ export function chainHarness(rpcUrl: string): ChainHarness {
     const account = privateKeyToAccount(ANVIL_ACCOUNT_0);
 
     return {
-        publicClient: createPublicClient({ chain: localChain, transport: http(rpcUrl) }),
+        // Deliberately the same constructor production uses, so the tests
+        // cannot pass against a client configured differently from the real one.
+        publicClient: createChainClient(rpcUrl),
         walletClient: createWalletClient({ account, chain: localChain, transport: http(rpcUrl) }),
         deployer: account.address,
     };
@@ -110,3 +107,4 @@ export async function mintTo(
     const receipt = await harness.publicClient.waitForTransactionReceipt({ hash });
     return receipt.blockNumber;
 }
+

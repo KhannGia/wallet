@@ -1,7 +1,8 @@
 // Entry point for `./wallet indexer`. Polls the chain forever.
-import { loadEnv, localChain } from "@wallet/shared";
-import { createPublicClient, http, type Address } from "viem";
+import { loadEnv } from "@wallet/shared";
+import type { Address } from "viem";
 
+import { createChainClient } from "./client.ts";
 import { createPool } from "../db/pool.ts";
 import { runIndexerOnce, type IndexerConfig } from "./indexer.ts";
 import type { FinalityStrategy } from "./finality.ts";
@@ -29,7 +30,7 @@ const config: IndexerConfig = {
 };
 
 const pool = createPool(env.DATABASE_URL);
-const client = createPublicClient({ chain: localChain, transport: http(env.RPC_URL) });
+const client = createChainClient(env.RPC_URL);
 
 let running = true;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

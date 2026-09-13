@@ -1,8 +1,9 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { createPublicClient, http } from "viem";
+import type { PublicClient } from "viem";
 
 import { loadEnv, type Env } from "@wallet/shared";
 
+import { createChainClient } from "./chain/client.ts";
 import { createPool, type Pool } from "./db/pool.ts";
 import { registerErrorHandler } from "./routes/errors.ts";
 import { registerLedgerRoutes } from "./routes/ledger.ts";
@@ -10,14 +11,14 @@ import { registerLedgerRoutes } from "./routes/ledger.ts";
 export interface AppDeps {
   env: Env;
   pool: Pool;
-  chain: ReturnType<typeof createPublicClient>;
+  chain: PublicClient;
 }
 
 export function createDeps(env: Env = loadEnv()): AppDeps {
   return {
     env,
     pool: createPool(env.DATABASE_URL),
-    chain: createPublicClient({ transport: http(env.RPC_URL) }),
+    chain: createChainClient(env.RPC_URL),
   };
 }
 
