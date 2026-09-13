@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P3 complete — on-chain deposits reach the ledger. See [Roadmap](#part-iii--roadmap).
+**Status:** P3 complete; P4 in progress (reorg detection done, ledger reversal next). See [Roadmap](#part-iii--roadmap).
 
 ---
 

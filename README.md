@@ -12,11 +12,9 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P3 complete — on-chain deposits.** The indexer watches the
-chain, parks an incoming transfer until its block is final, then releases it to
-the depositor. A user's balance always means "spendable"; anything still
-reorg-able is reported separately as pending. Undoing a deposit whose block was
-replaced is P4.
+**Current status: P4 in progress — reorg detection.** On top of P3, the wallet
+can now tell that a block it recorded a deposit in is no longer the block the
+chain agrees on. Reversing those deposits in the ledger is the next slice.
 
 ## Requirements
 
@@ -110,6 +108,25 @@ longer.
 
 Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
 every deployment is lost and `USDC_ADDRESS` has to be set again.
+
+## What the P4 slice demonstrates so far
+
+**Reorgs are induced, not simulated.** `anvil_reorg` rewrites real blocks, so
+the tests exercise the same conditions a live chain produces: a height keeps its
+number and receives a new hash. Removing the hash comparison from the detector
+and leaving a height check in its place fails two of these tests every run.
+
+**Block data must not be cached.** viem holds block reads for its polling
+interval by default. That is a good default and precisely wrong here: after a
+reorg the cache keeps serving the old hash, so the check compares a stale hash
+against itself and concludes nothing changed -- silently leaving deposits from a
+replaced block credited forever. `createChainClient` sets `cacheTime: 0` for
+every service, and the tests use that same constructor so they cannot pass
+against a client configured differently from production.
+
+**Detection reports; it does not act.** Reversing the ledger is a separate step,
+so detection can be exercised on its own and a bug in reporting can never move
+money by itself.
 
 ## What P3 demonstrates
 
