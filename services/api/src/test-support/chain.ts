@@ -108,3 +108,26 @@ export async function mintTo(
     return receipt.blockNumber;
 }
 
+/** Sends a raw JSON-RPC call, for anvil methods viem does not model. */
+async function anvilRpc(harness: ChainHarness, method: string, params: unknown[]): Promise<void> {
+    const request = harness.publicClient.request as unknown as (args: {
+        method: string;
+        params: unknown[];
+    }) => Promise<unknown>;
+
+    await request({ method, params });
+}
+
+/** Mines `count` blocks immediately, without waiting on anvil's block timer. */
+export async function mineBlocks(harness: ChainHarness, count: number): Promise<void> {
+    await anvilRpc(harness, "anvil_mine", [`0x${count.toString(16)}`]);
+}
+
+/**
+ * Rewrites the last `depth` blocks, which is what makes reorg handling testable
+ * at all. The blocks at those heights keep their numbers but receive new
+ * hashes, exactly as a real reorganisation would leave them.
+ */
+export async function induceReorg(harness: ChainHarness, depth: number): Promise<void> {
+    await anvilRpc(harness, "anvil_reorg", [depth, []]);
+}
