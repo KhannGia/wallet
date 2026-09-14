@@ -171,7 +171,13 @@ describe("ledger API", () => {
         });
 
         assert.equal(response.statusCode, 200);
-        assert.deepEqual(response.json(), { balanced: true, ledgerSum: "0", drift: [] });
+        assert.deepEqual(response.json(), {
+            balanced: true,
+            ledgerSum: "0",
+            drift: [],
+            // Nothing is parked: these operations never went through the chain.
+            parked: { held: "0", owed: "0", matches: true },
+        });
     });
 
     it("rejects a malformed amount instead of coercing it", async () => {

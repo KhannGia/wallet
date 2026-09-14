@@ -44,7 +44,9 @@ export async function assertBalanced(pool: Pool): Promise<void> {
     const result = await reconcile(pool);
     if (!result.balanced) {
         throw new Error(
-            `Ledger invariant broken: sum=${result.ledgerSum}, drift=${JSON.stringify(result.drift)}`,
+            `Ledger invariant broken: sum=${result.ledgerSum}, ` +
+                `drift=${JSON.stringify(result.drift)}, ` +
+                `parked=${JSON.stringify(result.parked)}`,
         );
     }
 }

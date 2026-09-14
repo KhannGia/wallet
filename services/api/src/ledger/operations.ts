@@ -276,12 +276,20 @@ export interface Reconciliation {
     balanced: boolean;
     ledgerSum: string;
     drift: { accountId: string; cachedBalance: string; entrySum: string }[];
+    /** PENDING_DEPOSITS against the deposits that are actually still pending. */
+    parked: { held: string; owed: string; matches: boolean };
 }
 
 /**
- * Proves two things the whole ledger rests on: that entries sum to zero across
- * the system, and that no account's cached balance has drifted from the sum of
- * its own entries.
+ * Proves three things the ledger rests on: that entries sum to zero across the
+ * system, that no account's cached balance has drifted from the sum of its own
+ * entries, and that the money parked in PENDING_DEPOSITS is exactly the money
+ * still owed to unconfirmed deposits.
+ *
+ * The third check exists because the first two cannot see money sitting in the
+ * wrong place. A reversal that marks a deposit reorged but forgets to move the
+ * funds leaves the total at zero and every cache accurate, while the amount
+ * stranded in the system account quietly grows.
  */
 export async function reconcile(pool: Pool): Promise<Reconciliation> {
     const total = one(
@@ -308,13 +316,32 @@ export async function reconcile(pool: Pool): Promise<Reconciliation> {
          HAVING a.balance <> COALESCE(SUM(e.amount), 0)`,
     );
 
+    const parked = one(
+        (
+            await pool.query<{ held: bigint; owed: bigint }>(
+                `SELECT
+                     (SELECT balance FROM accounts WHERE system_key = 'PENDING_DEPOSITS') AS held,
+                     (SELECT COALESCE(SUM(amount), 0)::BIGINT
+                        FROM chain_deposits WHERE status = 'PENDING') AS owed`,
+            )
+        ).rows,
+        "parked deposits",
+    );
+
+    const parkedMatches = parked.held === parked.owed;
+
     return {
-        balanced: total.total === 0n && drift.length === 0,
+        balanced: total.total === 0n && drift.length === 0 && parkedMatches,
         ledgerSum: String(total.total),
         drift: drift.map((row) => ({
             accountId: String(row.id),
             cachedBalance: String(row.balance),
             entrySum: String(row.entry_sum),
         })),
+        parked: {
+            held: String(parked.held),
+            owed: String(parked.owed),
+            matches: parkedMatches,
+        },
     };
 }
