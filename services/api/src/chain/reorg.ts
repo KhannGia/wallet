@@ -12,6 +12,9 @@ import type { Pool } from "../db/pool.ts";
  */
 export interface ReorgedDeposit {
     id: bigint;
+    /** The log's own identity, which the reversal uses as its idempotency key. */
+    transactionHash: string;
+    logIndex: number;
     accountId: bigint;
     amount: bigint;
     status: "PENDING" | "CONFIRMED";
@@ -23,6 +26,8 @@ export interface ReorgedDeposit {
 
 interface DepositRow {
     id: bigint;
+    transaction_hash: string;
+    log_index: number;
     account_id: bigint;
     amount: bigint;
     status: "PENDING" | "CONFIRMED";
@@ -82,7 +87,7 @@ export async function findReorgedDeposits(
     options: { fromBlock: bigint },
 ): Promise<ReorgedDeposit[]> {
     const { rows } = await pool.query<DepositRow>(
-        `SELECT id, account_id, amount, status, block_number, block_hash
+        `SELECT id, transaction_hash, log_index, account_id, amount, status, block_number, block_hash
            FROM chain_deposits
           WHERE block_number >= $1 AND status <> 'REORGED'
           ORDER BY block_number, log_index`,
@@ -112,6 +117,8 @@ export async function findReorgedDeposits(
 
         reorged.push({
             id: row.id,
+            transactionHash: row.transaction_hash,
+            logIndex: row.log_index,
             accountId: row.account_id,
             amount: row.amount,
             status: row.status,

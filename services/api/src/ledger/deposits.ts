@@ -200,3 +200,71 @@ export async function pendingBalance(pool: Pool, accountId: bigint): Promise<big
 
     return one(rows, "pending balance").total;
 }
+
+export type ReversalOutcome =
+    | { kind: "reversed"; depositId: string; amount: string }
+    | { kind: "needs_review"; depositId: string; amount: string; reason: string };
+
+/**
+ * Undoes a deposit whose block was reorganised away.
+ *
+ * A pending deposit is reversed automatically: the money is still sitting in
+ * PENDING_DEPOSITS, so moving it back to BANK_GATEWAY takes nothing from
+ * anyone. This is the case the two-step deposit design exists to make safe.
+ *
+ * A confirmed deposit is not reversed automatically, and that is a deliberate
+ * refusal rather than a gap. Its funds are in a user account and may already
+ * have been spent, so the reversal could either fail on insufficient balance or
+ * push a real person negative. Deciding what to do about that is not a call an
+ * unattended job should make. It should also never happen: confirmation waits
+ * for finality, and a finalised block being replaced means something far worse
+ * than a routine reorg has occurred.
+ */
+export async function reverseDeposit(
+    pool: Pool,
+    deposit: { id: bigint; transactionHash: string; logIndex: number; amount: bigint; status: string },
+): Promise<ReversalOutcome> {
+    if (deposit.status !== "PENDING") {
+        return {
+            kind: "needs_review",
+            depositId: String(deposit.id),
+            amount: String(deposit.amount),
+            reason:
+                `deposit ${deposit.id} was already confirmed; its funds are in a user account ` +
+                "and may have been spent, so reversing it is a manual decision",
+        };
+    }
+
+    const outcome = await runIdempotent(
+        pool,
+        {
+            key: `chain-reverse:${deposit.transactionHash}:${deposit.logIndex}`,
+            kind: "REVERSAL",
+            body: { depositId: String(deposit.id) },
+        },
+        async (client, ledgerTxId): Promise<ReversalOutcome> => {
+            const pending = await systemAccountId(client, "PENDING_DEPOSITS");
+            const gateway = await systemAccountId(client, "BANK_GATEWAY");
+
+            // The exact inverse of recordPendingDeposit. No user account is
+            // touched, because no user was ever credited.
+            await postEntries(client, ledgerTxId, [
+                { accountId: pending, amount: -deposit.amount },
+                { accountId: gateway, amount: deposit.amount },
+            ]);
+
+            await client.query(
+                "UPDATE chain_deposits SET status = 'REORGED' WHERE id = $1 AND status = 'PENDING'",
+                [deposit.id],
+            );
+
+            return {
+                kind: "reversed",
+                depositId: String(deposit.id),
+                amount: String(deposit.amount),
+            };
+        },
+    );
+
+    return outcome.result;
+}
