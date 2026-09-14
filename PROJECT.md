@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P3 complete; P4 in progress (reorg detection done, ledger reversal next). See [Roadmap](#part-iii--roadmap).
+**Status:** P4 complete — reorged deposits are detected and reversed. See [Roadmap](#part-iii--roadmap).
 
 ---
 
@@ -293,7 +293,7 @@ demonstrable.
 | ~~**P1**~~ | Off-chain ledger: double-entry, accounts, idempotency keys, `SELECT FOR UPDATE`, ordered locking                | Done: interleaved-transaction test fails without the lock; `SUM = 0` holds | 5 |
 | ~~**P2**~~ | HD wallet (BIP-44), derive addresses from xpub, API server never touches a private key                      | Done: addresses match anvil's published vector; xprv rejected at load | 3  |
 | ~~**P3**~~ | Indexer: scan blocks, catch USDC `Transfer` events, resume from `last_scanned_block`                        | Done: deposit is parked until final, then credited; rescans never double-credit | 5 |
-| **P4** | **Reorg + finality**: pending vs available balance, `finalized` block tag, re-verify recent block hashes, reversing entries | `anvil_reorg` -> deposit rolls back correctly, ledger stays balanced | 4    |
+| ~~**P4**~~ | **Reorg + finality**: pending vs available balance, `finalized` block tag, re-verify recent block hashes, reversing entries | Done: `anvil_reorg` -> deposit reversed, cursor rewound, ledger balanced | 4 |
 
 > **Safe stopping point #1** (week 4) — already a strong project.
 

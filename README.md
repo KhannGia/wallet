@@ -12,9 +12,11 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P4 in progress — reorg detection.** On top of P3, the wallet
-can now tell that a block it recorded a deposit in is no longer the block the
-chain agrees on. Reversing those deposits in the ledger is the next slice.
+**Current status: P4 complete — reorg handling.** A deposit whose block is
+replaced is returned to the gateway, marked reorged, and the scanner rewinds so
+the replacement blocks are read. Because unconfirmed funds never reach a user
+account, reversal takes nothing from anyone. Withdrawals and nonce management
+are P5.
 
 ## Requirements
 
@@ -109,7 +111,7 @@ longer.
 Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
 every deployment is lost and `USDC_ADDRESS` has to be set again.
 
-## What the P4 slice demonstrates so far
+## What P4 demonstrates
 
 **Reorgs are induced, not simulated.** `anvil_reorg` rewrites real blocks, so
 the tests exercise the same conditions a live chain produces: a height keeps its
@@ -124,9 +126,30 @@ replaced block credited forever. `createChainClient` sets `cacheTime: 0` for
 every service, and the tests use that same constructor so they cannot pass
 against a client configured differently from production.
 
-**Detection reports; it does not act.** Reversing the ledger is a separate step,
-so detection can be exercised on its own and a bug in reporting can never move
-money by itself.
+**Detection reports; reversal acts.** They are separate functions so detection
+can be exercised on its own and a bug in reporting cannot move money by itself.
+
+**Reversal takes nothing from anyone.** A reorged deposit is still parked in
+`PENDING_DEPOSITS`, so returning it to the gateway touches no user account. This
+is the payoff of the two-step deposit introduced in P3.
+
+**A confirmed deposit is not clawed back automatically, and that is deliberate.**
+Its funds are in a user account and may already be spent, so an automated
+reversal would either fail or push a real person negative. The indexer reports
+it for manual review on every pass instead. It should also never happen:
+confirmation waits for finality, and a finalised block being replaced means
+something far worse than routine churn.
+
+**The cursor rewinds, which is why `advanceCursor` refuses to.** Rewinding is
+correct in exactly one situation, so it is a separate, explicitly named
+operation that a stale scan result cannot trigger by accident.
+
+**Reconciliation checks where the money is, not just that it sums to zero.** A
+reversal that marks a deposit reorged but forgets to move the funds leaves the
+total at zero and every cached balance accurate, while the amount stranded in
+the system account quietly grows. So reconciliation also asserts that
+`PENDING_DEPOSITS` holds exactly what the still-pending deposits are owed --
+an invariant that catches a class of bug the first two checks are blind to.
 
 ## What P3 demonstrates
 
