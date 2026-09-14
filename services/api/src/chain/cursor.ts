@@ -48,3 +48,25 @@ export async function advanceCursor(
         [id, block],
     );
 }
+
+/**
+ * Moves the cursor backwards so a range is scanned again.
+ *
+ * Deliberately separate from advanceCursor, which refuses to go back. Rewinding
+ * is correct in exactly one situation -- the blocks ahead were reorganised away
+ * and their replacements have not been read yet -- and making it a distinct,
+ * explicitly named operation keeps a stale scan result from doing it by
+ * accident.
+ */
+export async function rewindCursor(
+    db: Pool | PoolClient,
+    id: ScannerId,
+    block: bigint,
+): Promise<void> {
+    await db.query(
+        `UPDATE indexer_state
+            SET last_scanned_block = LEAST(last_scanned_block, $2), updated_at = now()
+          WHERE id = $1`,
+        [id, block],
+    );
+}

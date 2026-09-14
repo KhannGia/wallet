@@ -48,11 +48,19 @@ while (running) {
     try {
         const result = await runIndexerOnce({ pool, client }, config);
 
-        if (result.recorded > 0 || result.confirmed > 0) {
+        if (result.recorded > 0 || result.confirmed > 0 || result.reversed > 0) {
             console.log(
                 `blocks ${result.scannedFrom ?? "-"}..${result.scannedTo ?? "-"} | ` +
-                    `recorded ${result.recorded} | confirmed ${result.confirmed} | cursor ${result.cursor}`,
+                    `recorded ${result.recorded} | confirmed ${result.confirmed} | ` +
+                    `reversed ${result.reversed} | cursor ${result.cursor}`,
             );
+        }
+
+        // A finalised block being replaced is an incident, not routine churn.
+        // It is reported on every pass until somebody resolves it, because
+        // silence here would mean a user is holding funds that do not exist.
+        for (const reason of result.needsReview) {
+            console.error(`MANUAL REVIEW REQUIRED: ${reason}`);
         }
     } catch (error) {
         // A failed pass is survivable: the cursor only advances after a range

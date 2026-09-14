@@ -1,9 +1,14 @@
 import type { Address, PublicClient } from "viem";
 
 import type { Pool } from "../db/pool.ts";
-import { confirmDepositsThrough, recordPendingDeposit } from "../ledger/deposits.ts";
-import { advanceCursor, loadCursor } from "./cursor.ts";
+import {
+    confirmDepositsThrough,
+    recordPendingDeposit,
+    reverseDeposit,
+} from "../ledger/deposits.ts";
+import { advanceCursor, loadCursor, rewindCursor } from "./cursor.ts";
 import { finalisedThrough, type FinalityStrategy } from "./finality.ts";
+import { findReorgedDeposits } from "./reorg.ts";
 import { fetchIncomingTransfers } from "./scanner.ts";
 
 export interface IndexerConfig {
@@ -26,6 +31,9 @@ export interface IndexerRunResult {
     scannedTo: bigint | null;
     recorded: number;
     confirmed: number;
+    reversed: number;
+    /** Reorged deposits an operator has to deal with; see reverseDeposit. */
+    needsReview: string[];
     cursor: bigint;
 }
 
@@ -55,6 +63,39 @@ export async function runIndexerOnce(
     config: IndexerConfig,
 ): Promise<IndexerRunResult> {
     const { pool, client } = deps;
+
+    const finalThrough = await finalisedThrough(client, config.finality);
+
+    // Reorgs are handled before scanning. Reading new blocks first would
+    // advance the cursor past a range whose replacements have not been read,
+    // and those transfers would never be seen again.
+    const unfinalisedFrom = finalThrough === null ? config.startBlock : finalThrough + 1n;
+    const reorged = await findReorgedDeposits(pool, client, { fromBlock: unfinalisedFrom });
+
+    let reversed = 0;
+    const needsReview: string[] = [];
+    let earliestReorged: bigint | null = null;
+
+    for (const deposit of reorged) {
+        const outcome = await reverseDeposit(pool, deposit);
+
+        if (outcome.kind === "reversed") {
+            reversed += 1;
+        } else {
+            needsReview.push(outcome.reason);
+        }
+
+        if (earliestReorged === null || deposit.blockNumber < earliestReorged) {
+            earliestReorged = deposit.blockNumber;
+        }
+    }
+
+    if (earliestReorged !== null) {
+        // Rewind so the replacement blocks are read. The transfers may reappear
+        // at a different height, or not at all; either way the chain, not the
+        // old record, decides.
+        await rewindCursor(pool, config.scannerId, earliestReorged - 1n);
+    }
 
     const cursor = await loadCursor(pool, config.scannerId, config.startBlock);
     const head = await client.getBlockNumber();
@@ -92,7 +133,6 @@ export async function runIndexerOnce(
 
     // Confirmation is independent of scanning: blocks become final with time,
     // not with new deposits, so this runs even when nothing new was scanned.
-    const finalThrough = await finalisedThrough(client, config.finality);
     const confirmed =
         finalThrough === null ? [] : await confirmDepositsThrough(pool, finalThrough);
 
@@ -101,6 +141,8 @@ export async function runIndexerOnce(
         scannedTo,
         recorded,
         confirmed: confirmed.length,
+        reversed,
+        needsReview,
         cursor: await loadCursor(pool, config.scannerId, config.startBlock),
     };
 }
