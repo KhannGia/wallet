@@ -131,3 +131,29 @@ export async function mineBlocks(harness: ChainHarness, count: number): Promise<
 export async function induceReorg(harness: ChainHarness, depth: number): Promise<void> {
     await anvilRpc(harness, "anvil_reorg", [depth, []]);
 }
+
+/**
+ * Sends one transaction from the harness account so its on-chain nonce
+ * advances. Tests that care about the transaction count must create it rather
+ * than assume the devnet already has some: anvil is restarted freely, and a
+ * test resting on ambient chain state passes or fails by accident.
+ */
+export async function bumpChainNonce(harness: ChainHarness): Promise<bigint> {
+    const account = harness.walletClient.account;
+    if (account === undefined) throw new Error("harness wallet has no account");
+
+    const hash = await harness.walletClient.sendTransaction({
+        account,
+        chain: localChain,
+        to: account.address,
+        value: 0n,
+    });
+
+    await harness.publicClient.waitForTransactionReceipt({ hash });
+    return BigInt(
+        await harness.publicClient.getTransactionCount({
+            address: account.address,
+            blockTag: "pending",
+        }),
+    );
+}
