@@ -12,11 +12,10 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P4 complete — reorg handling.** A deposit whose block is
-replaced is returned to the gateway, marked reorged, and the scanner rewinds so
-the replacement blocks are read. Because unconfirmed funds never reach a user
-account, reversal takes nothing from anyone. Withdrawals and nonce management
-are P5.
+**Current status: P5 in progress — nonce allocation.** Outgoing transactions
+take their nonce from the database rather than from the chain, so two workers
+can never claim the same one. Signing and broadcasting withdrawals is the next
+slice.
 
 ## Requirements
 
@@ -110,6 +109,29 @@ longer.
 
 Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
 every deployment is lost and `USDC_ADDRESS` has to be set again.
+
+## What the P5 slice demonstrates so far
+
+**Nonces come from the database, not the chain.** Two workers that both call
+`eth_getTransactionCount` receive the same answer, sign two transactions with
+the same nonce, and the node keeps one -- the other withdrawal disappears with
+no error anywhere. Postgres can serialise the request; the chain cannot.
+
+**Allocation is a single `UPDATE ... RETURNING`.** Postgres holds the row lock
+for the duration of one statement, so callers are serialised without explicit
+locking. Reading the nonce and writing back `nonce + 1` as two statements
+reintroduces exactly the race the table exists to remove, and doing so fails two
+of these tests.
+
+**A rollback returns the nonce.** Gaps are worse than duplicates: a nonce that
+is allocated but never broadcast blocks every transaction queued behind it.
+Allocation therefore happens inside the caller's transaction, so a withdrawal
+that fails after allocating does not consume one.
+
+**The counter is never wound backwards.** Running ahead of the chain is normal
+while transactions are in flight, and "correcting" it would reissue nonces
+already sitting in the mempool. Sync only ever moves forward, for the case where
+the key was used by something this database does not know about.
 
 ## What P4 demonstrates
 

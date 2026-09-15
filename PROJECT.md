@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P4 complete — reorged deposits are detected and reversed. See [Roadmap](#part-iii--roadmap).
+**Status:** P4 complete; P5 in progress (nonce allocation done, broadcasting next). See [Roadmap](#part-iii--roadmap).
 
 ---
 
