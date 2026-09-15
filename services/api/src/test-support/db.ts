@@ -27,7 +27,7 @@ export function testPool(): Pool {
 export async function resetDatabase(pool: Pool): Promise<void> {
     await migrate(pool);
     await pool.query(
-        "TRUNCATE chain_deposits, ledger_entries, transactions, accounts, users, indexer_state "
+        "TRUNCATE chain_deposits, ledger_entries, transactions, accounts, users, indexer_state, hot_wallets "
             + "RESTART IDENTITY CASCADE",
     );
     // TRUNCATE ... RESTART IDENTITY only resets sequences owned by the table's
