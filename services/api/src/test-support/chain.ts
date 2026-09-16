@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { localChain } from "@wallet/shared";
 import { createWalletClient, http, type Address, type PublicClient, type WalletClient } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 
 import { createChainClient } from "../chain/client.ts";
 
@@ -156,4 +156,49 @@ export async function bumpChainNonce(harness: ChainHarness): Promise<bigint> {
             blockTag: "pending",
         }),
     );
+}
+
+/** The public Foundry test mnemonic; every key it derives is worthless. */
+const ANVIL_MNEMONIC = "test test test test test test test test test test test junk";
+
+export interface Signer {
+    walletClient: WalletClient;
+    address: Address;
+}
+
+/**
+ * A signing client for one of anvil's accounts.
+ *
+ * Tests use an index well away from 0, because index 0 is both the deployer and
+ * the first derived deposit address -- having the hot wallet share it would
+ * make the test's own transfers look like deposits.
+ */
+export function anvilSigner(rpcUrl: string, addressIndex: number): Signer {
+    const account = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex });
+
+    return {
+        walletClient: createWalletClient({ account, chain: localChain, transport: http(rpcUrl) }),
+        address: account.address,
+    };
+}
+
+/**
+ * Turns anvil's timed mining on or off.
+ *
+ * Passing 0 leaves transactions sitting in the mempool, which is the only way
+ * to observe a stuck transaction on a devnet that otherwise mines every two
+ * seconds. Callers must restore it, or every later test hangs.
+ */
+export async function setIntervalMining(harness: ChainHarness, seconds: number): Promise<void> {
+    await anvilRpc(harness, "evm_setIntervalMining", [seconds]);
+}
+
+/** Mints tokens to the signer that will pay them out. */
+export async function fundSigner(
+    harness: ChainHarness,
+    token: Address,
+    signer: Signer,
+    amount: bigint,
+): Promise<void> {
+    await mintTo(harness, token, signer.address, amount);
 }
