@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P4 complete; P5 in progress (nonce allocation done, broadcasting next). See [Roadmap](#part-iii--roadmap).
+**Status:** P5 complete — on-chain payouts, with nonce and stuck-transaction handling. See [Roadmap](#part-iii--roadmap).
 
 ---
 
@@ -301,7 +301,7 @@ demonstrable.
 
 | Phase  | Work                                                                                                        | Demo                                                        | Days |
 | ------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---- |
-| **P5** | Withdrawal worker: DB-allocated nonces under lock, `PENDING -> SUBMITTED -> CONFIRMED` state machine, stuck-tx replacement (same nonce, +10% gas) | 20 concurrent withdrawals -> contiguous nonces, no gaps, no duplicates | 5 |
+| ~~**P5**~~ | Withdrawal worker: DB-allocated nonces, `PENDING -> SUBMITTED -> CONFIRMED` state machine, stuck-tx replacement | Done: contiguous nonces, stuck replaced, unsendable payouts abandoned and refunded | 5 |
 | **P6** | Sweeping: gas funding for deposit addresses, gas-price-aware thresholds, batching                            | Automatic consolidation from 50 addresses into the hot wallet | 3    |
 
 ### Track C — Multi-sig vault (weeks 7–9)

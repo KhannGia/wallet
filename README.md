@@ -12,10 +12,11 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P5 in progress — nonce allocation.** Outgoing transactions
-take their nonce from the database rather than from the chain, so two workers
-can never claim the same one. Signing and broadcasting withdrawals is the next
-slice.
+**Current status: P5 complete — on-chain payouts.** A withdrawal debits the
+user immediately, waits in a system account while the transaction is in flight,
+and settles only once the chain proves the tokens moved. The worker replaces
+stuck transactions and gives up on ones that can never be sent, so a single bad
+payout cannot freeze the queue. Multi-sig vault work starts in P7.
 
 ## Requirements
 
@@ -56,6 +57,7 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet keygen`   | Generate an HD wallet offline (prints a mnemonic once)  |
 | `./wallet deploy-token` | Deploy the devnet ERC-20 and print its address     |
 | `./wallet indexer`  | Watch the chain and credit deposits                    |
+| `./wallet withdrawer` | Sign and broadcast payouts (holds the spending key)  |
 | `./wallet migrate`  | Apply pending database migrations                      |
 | `./wallet db-reset` | Drop the schema and re-apply migrations (destroys data)|
 | `./wallet psql`     | psql shell against the dev database                    |
@@ -110,7 +112,23 @@ longer.
 Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
 every deployment is lost and `USDC_ADDRESS` has to be set again.
 
-## What the P5 slice demonstrates so far
+## Paying out on chain
+
+```bash
+./wallet cast "wallet new"     # a throwaway devnet key; put it in HOT_WALLET_PRIVATE_KEY
+./wallet up                    # `restart` does NOT re-read .env; `up` recreates
+./wallet withdrawer            # in another terminal
+
+curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json' \
+    -H 'Idempotency-Key: p1' \
+    -d '{"accountId":"5","to":"0x...","amount":"320000000"}'
+```
+
+The balance drops immediately and appears as `reservedBalance` until the chain
+settles it. The hot wallet needs both the token and some native currency for
+gas.
+
+## What P5 demonstrates
 
 **Nonces come from the database, not the chain.** Two workers that both call
 `eth_getTransactionCount` receive the same answer, sign two transactions with
@@ -132,6 +150,36 @@ that fails after allocating does not consume one.
 while transactions are in flight, and "correcting" it would reissue nonces
 already sitting in the mempool. Sync only ever moves forward, for the case where
 the key was used by something this database does not know about.
+
+**A successful receipt is not proof that anything happened.** A call to an
+address holding no code succeeds trivially -- there is no code to revert -- so a
+misconfigured token address produces a healthy receipt with an empty log list
+while no tokens move at all. The worker therefore checks the receipt for a
+matching `Transfer` event before settling, and the CLI refuses to start if
+nothing is deployed at the configured token address. Without that check the
+ledger records payouts the chain never made.
+
+**Destination addresses are checksummed at the API boundary.** viem rejects a
+mixed-case address with a bad EIP-55 checksum, and it rejects it at signing
+time -- deep inside the worker, after a nonce has already been committed to the
+row. That transaction can then never be broadcast and every later nonce queues
+behind it. Rejecting it with a 400 costs the caller nothing and costs the queue
+nothing.
+
+**A withdrawal that cannot be sent is abandoned, not retried forever.** After a
+few failed broadcasts the worker spends the nonce on an empty self-transfer,
+refunds the user, and lets the queue move. A nonce held by a transaction that
+will never exist is the worst state this system can reach.
+
+**Stuck transactions are replaced at the same nonce.** A replacement must reuse
+the nonce it is replacing, which is why the nonce lives on the row. The fee is
+raised by more than the 10% nodes demand, because one underpriced withdrawal
+freezes every later one behind it.
+
+**Funds are debited on request, not on settlement.** They wait in
+`PENDING_WITHDRAWALS`, so the same balance cannot be spent twice while a
+transaction is in flight, and a refund is always funded -- it moves money out of
+a system account rather than inventing it.
 
 ## What P4 demonstrates
 
