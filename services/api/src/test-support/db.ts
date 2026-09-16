@@ -27,7 +27,8 @@ export function testPool(): Pool {
 export async function resetDatabase(pool: Pool): Promise<void> {
     await migrate(pool);
     await pool.query(
-        "TRUNCATE chain_deposits, ledger_entries, transactions, accounts, users, indexer_state, hot_wallets "
+        "TRUNCATE chain_withdrawals, chain_deposits, ledger_entries, transactions, accounts, users, "
+            + "indexer_state, hot_wallets "
             + "RESTART IDENTITY CASCADE",
     );
     // TRUNCATE ... RESTART IDENTITY only resets sequences owned by the table's
@@ -35,7 +36,8 @@ export async function resetDatabase(pool: Pool): Promise<void> {
     await pool.query("ALTER SEQUENCE deposit_address_index_seq RESTART WITH 0");
     await pool.query(
         `INSERT INTO accounts (type, system_key)
-         VALUES ('SYSTEM', 'BANK_GATEWAY'), ('SYSTEM', 'FEE_REVENUE'), ('SYSTEM', 'PENDING_DEPOSITS')`,
+         VALUES ('SYSTEM', 'BANK_GATEWAY'), ('SYSTEM', 'FEE_REVENUE'),
+                ('SYSTEM', 'PENDING_DEPOSITS'), ('SYSTEM', 'PENDING_WITHDRAWALS')`,
     );
 }
 
