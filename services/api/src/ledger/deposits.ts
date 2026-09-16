@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "../db/pool.ts";
 import { one } from "../db/pool.ts";
 import type { IncomingTransfer } from "../chain/scanner.ts";
 import { runIdempotent } from "./idempotency.ts";
+import { systemAccountId } from "./system-accounts.ts";
 import { postEntries } from "./postings.ts";
 
 /**
@@ -14,17 +15,6 @@ import { postEntries } from "./postings.ts";
  * take funds back from someone who already spent them.
  */
 
-async function systemAccountId(client: PoolClient, key: string): Promise<bigint> {
-    const { rows } = await client.query<{ id: bigint }>(
-        "SELECT id FROM accounts WHERE system_key = $1",
-        [key],
-    );
-    const row = rows[0];
-    if (row === undefined) {
-        throw new Error(`System account ${key} is missing; run migrations`);
-    }
-    return row.id;
-}
 
 export interface RecordedDeposit {
     depositId: string;
