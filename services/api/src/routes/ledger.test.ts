@@ -177,6 +177,7 @@ describe("ledger API", () => {
             drift: [],
             // Nothing is parked: these operations never went through the chain.
             parked: { held: "0", owed: "0", matches: true },
+            reserved: { held: "0", owed: "0", matches: true },
         });
     });
 

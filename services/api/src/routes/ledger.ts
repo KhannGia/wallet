@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Address } from "viem";
 
 import type { Pool } from "../db/pool.ts";
-import { MissingIdempotencyKey } from "../ledger/errors.ts";
+import { MissingIdempotencyKey, PayoutsNotConfigured } from "../ledger/errors.ts";
 import {
     createUser,
     deposit,
@@ -11,11 +12,13 @@ import {
     transfer,
     withdraw,
 } from "../ledger/operations.ts";
+import { requestWithdrawal } from "../ledger/withdrawals.ts";
 import {
     accountIdSchema,
     createUserSchema,
     depositSchema,
     entriesQuerySchema,
+    payoutSchema,
     transferSchema,
     withdrawalSchema,
 } from "./schemas.ts";
@@ -33,7 +36,12 @@ function requireIdempotencyKey(request: FastifyRequest): string {
     return key;
 }
 
-export function registerLedgerRoutes(app: FastifyInstance, pool: Pool, xpub: string): void {
+export function registerLedgerRoutes(
+    app: FastifyInstance,
+    pool: Pool,
+    xpub: string,
+    tokenAddress: string | undefined,
+): void {
     app.post("/api/v1/users", async (request, reply) => {
         const { email } = createUserSchema.parse(request.body);
         return reply.code(201).send(await createUser(pool, { email, xpub }));
@@ -75,6 +83,29 @@ export function registerLedgerRoutes(app: FastifyInstance, pool: Pool, xpub: str
             reply,
             await transfer(pool, { fromAccountId, toAccountId, amount, idempotencyKey }),
         );
+    });
+
+    // An on-chain payout, as opposed to /withdrawals, which settles against the
+    // gateway inside the ledger and never touches the chain.
+    app.post("/api/v1/payouts", async (request, reply) => {
+        const idempotencyKey = requireIdempotencyKey(request);
+        const { accountId, to, amount } = payoutSchema.parse(request.body);
+
+        if (tokenAddress === undefined) {
+            throw new PayoutsNotConfigured();
+        }
+
+        const result = await requestWithdrawal(pool, {
+            accountId,
+            to: to as Address,
+            amount,
+            tokenAddress,
+            idempotencyKey,
+        });
+
+        // The funds are debited now and settle when the worker gets them on
+        // chain, so this is an acceptance, not a completion.
+        return reply.code(202).send(result);
     });
 
     app.get("/api/v1/admin/reconciliation", async (_request, reply) => {

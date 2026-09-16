@@ -42,6 +42,29 @@ const envSchema = z.object({
   FINALITY_CONFIRMATIONS: z.coerce.number().int().positive().default(3),
 
   INDEXER_POLL_MS: z.coerce.number().int().positive().default(4000),
+
+  // --- Withdrawal worker. The only component that holds a spending key. ---
+
+  /**
+   * Signs outgoing transfers. Development only: in production this belongs in
+   * a KMS or HSM, and the worker asks that service to sign rather than holding
+   * the key in its own memory.
+   */
+  HOT_WALLET_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "HOT_WALLET_PRIVATE_KEY must be a 32-byte hex key")
+    .optional(),
+
+  /** A transaction unmined for this long is resent at a higher fee. */
+  STUCK_AFTER_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Nodes require at least 10%; a little above avoids rounding rejections. */
+  FEE_BUMP_PERCENT: z.coerce.number().int().min(10).default(12),
+
+  /** Failed broadcasts before a withdrawal is abandoned and its nonce freed. */
+  MAX_BROADCAST_ATTEMPTS: z.coerce.number().int().positive().default(3),
+
+  WITHDRAWAL_POLL_MS: z.coerce.number().int().positive().default(4000),
 });
 
 export type Env = z.infer<typeof envSchema>;

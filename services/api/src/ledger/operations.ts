@@ -5,6 +5,7 @@ import { deriveDepositAddress } from "@wallet/shared";
 import { one } from "../db/pool.ts";
 import { AccountNotFound } from "./errors.ts";
 import { pendingBalance } from "./deposits.ts";
+import { reservedBalance } from "./withdrawals.ts";
 import { runIdempotent, type IdempotentOutcome } from "./idempotency.ts";
 import { postEntries } from "./postings.ts";
 
@@ -198,6 +199,7 @@ export async function getAccount(
     currency: string;
     depositAddress: string | null;
     pendingBalance: string;
+    reservedBalance: string;
 }> {
     const { rows } = await pool.query<{
         id: bigint;
@@ -224,6 +226,8 @@ export async function getAccount(
         currency: account.currency,
         depositAddress: account.deposit_address,
         pendingBalance: String(await pendingBalance(pool, accountId)),
+        // Already debited, waiting on an on-chain payout to settle.
+        reservedBalance: String(await reservedBalance(pool, accountId)),
     };
 }
 
@@ -278,6 +282,8 @@ export interface Reconciliation {
     drift: { accountId: string; cachedBalance: string; entrySum: string }[];
     /** PENDING_DEPOSITS against the deposits that are actually still pending. */
     parked: { held: string; owed: string; matches: boolean };
+    /** PENDING_WITHDRAWALS against withdrawals debited but not yet settled. */
+    reserved: { held: string; owed: string; matches: boolean };
 }
 
 /**
@@ -330,8 +336,23 @@ export async function reconcile(pool: Pool): Promise<Reconciliation> {
 
     const parkedMatches = parked.held === parked.owed;
 
+    const reserved = one(
+        (
+            await pool.query<{ held: bigint; owed: bigint }>(
+                `SELECT
+                     (SELECT balance FROM accounts WHERE system_key = 'PENDING_WITHDRAWALS') AS held,
+                     (SELECT COALESCE(SUM(amount), 0)::BIGINT
+                        FROM chain_withdrawals
+                       WHERE status IN ('PENDING', 'SUBMITTED')) AS owed`,
+            )
+        ).rows,
+        "reserved withdrawals",
+    );
+
+    const reservedMatches = reserved.held === reserved.owed;
+
     return {
-        balanced: total.total === 0n && drift.length === 0 && parkedMatches,
+        balanced: total.total === 0n && drift.length === 0 && parkedMatches && reservedMatches,
         ledgerSum: String(total.total),
         drift: drift.map((row) => ({
             accountId: String(row.id),
@@ -342,6 +363,11 @@ export async function reconcile(pool: Pool): Promise<Reconciliation> {
             held: String(parked.held),
             owed: String(parked.owed),
             matches: parkedMatches,
+        },
+        reserved: {
+            held: String(reserved.held),
+            owed: String(reserved.owed),
+            matches: reservedMatches,
         },
     };
 }

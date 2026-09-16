@@ -1,3 +1,4 @@
+import { getAddress, isAddress } from "viem";
 import { z } from "zod";
 
 /**
@@ -35,4 +36,30 @@ export const transferSchema = z.object({
 export const entriesQuerySchema = z.object({
     cursor: accountIdSchema.optional(),
     limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+/**
+ * Validates and checksums a destination address.
+ *
+ * A hex-shaped string is not enough. viem refuses a mixed-case address whose
+ * EIP-55 checksum does not match, and it refuses it at signing time -- deep
+ * inside the withdrawal worker, after a nonce has already been committed to the
+ * row. That transaction can then never be broadcast, and every later nonce
+ * queues behind it forever.
+ *
+ * Rejecting it here costs the caller a 400 and costs the queue nothing.
+ */
+export const addressSchema = z
+    .string()
+    .refine((value) => isAddress(value, { strict: false }), "must be a 20-byte hex address")
+    .refine(
+        (value) => !/[A-F]/.test(value) || isAddress(value),
+        "address has an invalid EIP-55 checksum",
+    )
+    .transform((value) => getAddress(value));
+
+export const payoutSchema = z.object({
+    accountId: accountIdSchema,
+    to: addressSchema,
+    amount: amountSchema,
 });

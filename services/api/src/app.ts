@@ -58,7 +58,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   registerErrorHandler(app);
-  registerLedgerRoutes(app, deps.pool, deps.env.WALLET_XPUB);
+  registerLedgerRoutes(app, deps.pool, deps.env.WALLET_XPUB, deps.env.USDC_ADDRESS);
 
   return app;
 }

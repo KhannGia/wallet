@@ -67,3 +67,13 @@ export class MissingIdempotencyKey extends LedgerError {
         );
     }
 }
+
+export class PayoutsNotConfigured extends LedgerError {
+    constructor() {
+        super(
+            "payouts_not_configured",
+            503,
+            "No token is configured, so on-chain payouts are unavailable. Set USDC_ADDRESS.",
+        );
+    }
+}

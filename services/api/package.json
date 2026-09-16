@@ -9,7 +9,8 @@
     "start": "node src/index.ts",
     "migrate": "node src/db/migrate-cli.ts",
     "keygen": "node src/wallet/keygen-cli.ts",
-    "indexer": "node src/chain/indexer-cli.ts"
+    "indexer": "node src/chain/indexer-cli.ts",
+    "withdrawer": "node src/chain/withdrawal-cli.ts"
   },
   "dependencies": {
     "@wallet/shared": "*",
