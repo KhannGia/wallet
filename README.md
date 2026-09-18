@@ -12,11 +12,10 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P5 complete — on-chain payouts.** A withdrawal debits the
-user immediately, waits in a system account while the transaction is in flight,
-and settles only once the chain proves the tokens moved. The worker replaces
-stuck transactions and gives up on ones that can never be sent, so a single bad
-payout cannot freeze the queue. Multi-sig vault work starts in P7.
+**Current status: P6 in progress — sweep planning.** The wallet can now work
+out which deposit addresses are worth emptying into the hot wallet and what that
+would cost. Signing the sweeps is the next slice; multi-sig vault work starts in
+P7.
 
 ## Requirements
 
@@ -128,7 +127,27 @@ The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
 
-## What P5 demonstrates
+## What the P6 slice demonstrates so far
+
+**Deciding and acting are separate.** The planner reads balances and returns a
+verdict per address. Nothing signs, so the decision can be inspected -- and got
+wrong -- without moving anyone's funds.
+
+**Sweeping dust destroys value.** An ERC-20 transfer costs gas whether it moves
+a million tokens or five, so below a threshold the tokens are better left where
+they are. Judging that properly means comparing a token amount against a
+native-currency cost, which needs a price feed this project does not have; the
+threshold is the honest stand-in, and the estimate is reported so an operator
+can revisit it.
+
+**A deposit address cannot pay its own way.** It receives tokens and nothing
+else, so it holds no native currency and the sweep costs two transactions: fund
+it, then transfer. The estimate says which case an address is in.
+
+**Tests get their own derivation range.** The chain outlives the database, so a
+test that funds an address leaves it funded for every later run. A fixed index
+made the suite pass once and fail from the second run onward, which is how this
+was found.
 
 **Nonces come from the database, not the chain.** Two workers that both call
 `eth_getTransactionCount` receive the same answer, sign two transactions with

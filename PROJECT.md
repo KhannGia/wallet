@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P5 complete — on-chain payouts, with nonce and stuck-transaction handling. See [Roadmap](#part-iii--roadmap).
+**Status:** P5 complete; P6 in progress (sweep planning done, signing next). See [Roadmap](#part-iii--roadmap).
 
 ---
 
