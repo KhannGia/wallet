@@ -1,17 +1,15 @@
 import {
     encodeFunctionData,
-    parseEventLogs,
     type Address,
     type Hash,
     type PublicClient,
-    type TransactionReceipt,
     type WalletClient,
 } from "viem";
 
 import { withTransaction, type Pool } from "../db/pool.ts";
 import { refundWithdrawal, settleWithdrawal } from "../ledger/withdrawals.ts";
-import { transferEvent } from "./erc20.ts";
 import { allocateNonce } from "./nonce.ts";
+import { receiptMovedTokens } from "./receipts.ts";
 
 const ERC20_TRANSFER_ABI = [
     {
@@ -225,30 +223,6 @@ async function broadcastUnsent(
     return { broadcast, abandoned };
 }
 
-/**
- * Confirms that a mined transaction actually moved the tokens.
- *
- * A successful receipt is not proof of anything on its own. A call to an
- * address holding no code succeeds trivially -- there is no code to revert --
- * so a misconfigured token address produces a perfectly healthy receipt with an
- * empty log list while nothing whatsoever happened. Settling on that would mean
- * the ledger recording a payout the chain never made.
- */
-function receiptMovedTokens(receipt: TransactionReceipt, row: InFlightRow): boolean {
-    const transfers = parseEventLogs({
-        abi: [transferEvent],
-        logs: receipt.logs,
-        eventName: "Transfer",
-    });
-
-    return transfers.some(
-        (log) =>
-            log.address.toLowerCase() === row.token_address.toLowerCase() &&
-            log.args.to.toLowerCase() === row.to_address.toLowerCase() &&
-            log.args.value === row.amount,
-    );
-}
-
 /** Turns mined transactions into ledger movements. */
 async function settleMined(deps: WorkerDeps): Promise<{ confirmed: number; failed: number }> {
     const { rows } = await deps.pool.query<InFlightRow>(
@@ -275,7 +249,13 @@ async function settleMined(deps: WorkerDeps): Promise<{ confirmed: number; faile
         }
 
         if (receipt.status === "success") {
-            if (!receiptMovedTokens(receipt, row)) {
+            const moved = receiptMovedTokens(receipt, {
+                token: row.token_address,
+                to: row.to_address,
+                amount: row.amount,
+            });
+
+            if (!moved) {
                 // Mined, successful, and yet no tokens moved. The usual cause is
                 // a token address with no contract behind it. Refusing to settle
                 // keeps the ledger honest; the funds stay reserved and the
