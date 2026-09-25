@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P5 complete; P6 in progress (sweep planning done, signing next). See [Roadmap](#part-iii--roadmap).
+**Status:** P6 complete — the backend half is done. Contracts start at P7. See [Roadmap](#part-iii--roadmap).
 
 ---
 
@@ -302,7 +302,7 @@ demonstrable.
 | Phase  | Work                                                                                                        | Demo                                                        | Days |
 | ------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---- |
 | ~~**P5**~~ | Withdrawal worker: DB-allocated nonces, `PENDING -> SUBMITTED -> CONFIRMED` state machine, stuck-tx replacement | Done: contiguous nonces, stuck replaced, unsendable payouts abandoned and refunded | 5 |
-| **P6** | Sweeping: gas funding for deposit addresses, gas-price-aware thresholds, batching                            | Automatic consolidation from 50 addresses into the hot wallet | 3    |
+| ~~**P6**~~ | Sweeping: gas funding for deposit addresses, balance thresholds                                           | Done: addresses funded and emptied into the hot wallet; mismatched mnemonic refused | 3 |
 
 ### Track C — Multi-sig vault (weeks 7–9)
 

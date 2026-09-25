@@ -12,10 +12,10 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P6 in progress — sweep planning.** The wallet can now work
-out which deposit addresses are worth emptying into the hot wallet and what that
-would cost. Signing the sweeps is the next slice; multi-sig vault work starts in
-P7.
+**Current status: P6 complete — deposit sweeping.** Deposit addresses are
+funded with just enough gas and emptied into the hot wallet. The whole backend
+half is done: funds come in, get consolidated, and go out, surviving reorgs and
+stuck transactions. Multi-sig vault work starts in P7.
 
 ## Requirements
 
@@ -57,6 +57,7 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet deploy-token` | Deploy the devnet ERC-20 and print its address     |
 | `./wallet indexer`  | Watch the chain and credit deposits                    |
 | `./wallet withdrawer` | Sign and broadcast payouts (holds the spending key)  |
+| `./wallet sweeper`  | Consolidate deposit addresses into the hot wallet       |
 | `./wallet migrate`  | Apply pending database migrations                      |
 | `./wallet db-reset` | Drop the schema and re-apply migrations (destroys data)|
 | `./wallet psql`     | psql shell against the dev database                    |
@@ -127,7 +128,7 @@ The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
 
-## What the P6 slice demonstrates so far
+## What P6 demonstrates
 
 **Deciding and acting are separate.** The planner reads balances and returns a
 verdict per address. Nothing signs, so the decision can be inspected -- and got
@@ -148,6 +149,29 @@ it, then transfer. The estimate says which case an address is in.
 test that funds an address leaves it funded for every later run. A fixed index
 made the suite pass once and fail from the second run onward, which is how this
 was found.
+
+**The sweeper holds the mnemonic, so it runs nowhere near the API.** Moving
+funds that have arrived at a deposit address requires the key for that address,
+which means the phrase every deposit address is derived from. That is the most
+dangerous secret in the system, so it lives in its own process -- the API server
+still holds nothing that can spend.
+
+**A mismatched mnemonic is caught before anything is signed.** A phrase that
+does not match the deployed xpub derives a perfectly valid key for a completely
+different address. Signing would succeed, the transaction would be accepted, and
+the tokens would sit untouched while the wallet reported success. Every
+derivation is checked against the address the xpub produced; removing that check
+fails a test.
+
+**Sweeping is stateless, and deliberately so.** It moves tokens between two
+addresses the wallet already controls, so no user's balance changes and there is
+nothing to record -- the deposit was credited when it arrived, and where the
+tokens physically sit afterwards is a custody detail. Re-reading balances every
+pass makes a crash halfway harmless: the next run simply picks up what is left.
+
+**One failing address does not strand the rest.** A single unsweepable deposit
+holding up every other user's funds would be worse than the failure itself, so
+failures are collected and reported rather than thrown.
 
 **Nonces come from the database, not the chain.** Two workers that both call
 `eth_getTransactionCount` receive the same answer, sign two transactions with
