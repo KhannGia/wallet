@@ -5,6 +5,7 @@ export {
     deriveDepositAddress,
     generateWallet,
     loadWatchOnlyKey,
+    signingAccountForIndex,
     xpubFromMnemonic,
     type GeneratedWallet,
 } from "./hd.ts";

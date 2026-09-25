@@ -1,8 +1,9 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { generateMnemonic as generateBip39Mnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english";
-import { HDKey, publicKeyToAddress } from "viem/accounts";
+import { HDKey, mnemonicToAccount, publicKeyToAddress } from "viem/accounts";
 import type { Address } from "viem";
+import type { HDAccount } from "viem/accounts";
 
 /**
  * BIP-44 for Ethereum: m / purpose' / coin_type' / account' / change.
@@ -115,4 +116,39 @@ export function xpubFromMnemonic(mnemonic: string, passphrase?: string): string 
     // .../0/0, so deriving ACCOUNT_PATH from that lands on a different branch.
     const master = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic, passphrase));
     return master.derive(ACCOUNT_PATH).publicExtendedKey;
+}
+
+/**
+ * Derives the signing account for one deposit address.
+ *
+ * This is the only way to move funds that have arrived at a deposit address,
+ * and it needs the mnemonic -- which is precisely why it does not live in the
+ * API server. Only the sweeper holds this, and only for as long as it runs.
+ *
+ * The expected address is not optional. A mnemonic that does not match the
+ * deployed xpub derives a perfectly valid key for a completely different
+ * address: signing would succeed, the transaction would be accepted, and the
+ * tokens the wallet is trying to move would sit untouched while it reports
+ * success. Comparing against the address the xpub produced turns that into an
+ * immediate failure.
+ */
+export function signingAccountForIndex(
+    mnemonic: string,
+    index: number,
+    expectedAddress: Address,
+): HDAccount {
+    if (!Number.isInteger(index) || index < 0 || index >= 2 ** 31) {
+        throw new Error(`Derivation index must be a non-hardened integer, got ${index}`);
+    }
+
+    const account = mnemonicToAccount(mnemonic, { addressIndex: index });
+
+    if (account.address.toLowerCase() !== expectedAddress.toLowerCase()) {
+        throw new Error(
+            `Mnemonic derives ${account.address} at index ${index}, but the stored deposit ` +
+                `address is ${expectedAddress}. The mnemonic does not match the configured xpub.`,
+        );
+    }
+
+    return account;
 }
