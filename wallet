@@ -53,6 +53,7 @@ Indexer
   deploy-token    Deploy the devnet ERC-20 and print its address (local only)
   indexer         Watch the chain and credit deposits (Ctrl+C to stop)
   withdrawer      Sign and broadcast payouts (holds the spending key)
+  sweeper         Consolidate deposit addresses into the hot wallet
 
 Database
   migrate         Apply pending migrations
@@ -108,6 +109,10 @@ case "${1:-help}" in
              --rpc-url http://anvil:8545 \
              --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
             | sed -n 's/^token: contract MockERC20 \(0x[0-9a-fA-F]*\)/USDC_ADDRESS=\1/p'
+        ;;
+    sweeper)
+        need_services
+        "${DC[@]}" run --rm node-tools "npm run sweeper --workspace @wallet/api"
         ;;
     withdrawer)
         need_services

@@ -65,6 +65,30 @@ const envSchema = z.object({
   MAX_BROADCAST_ATTEMPTS: z.coerce.number().int().positive().default(3),
 
   WITHDRAWAL_POLL_MS: z.coerce.number().int().positive().default(4000),
+
+  // --- Sweeper. Holds the mnemonic, so it runs nowhere near the API. ---
+
+  /**
+   * Derives the keys for deposit addresses. Development only: in production
+   * the sweeper asks a KMS to sign, and this never exists as a string.
+   */
+  WALLET_MNEMONIC: z.string().min(1).optional(),
+
+  /** Below this token balance an address is left alone; sweeping it costs more. */
+  MIN_SWEEP_BALANCE: z
+    .string()
+    .regex(/^\d+$/)
+    .default("1000000")
+    .transform((value) => BigInt(value)),
+
+  /** Native currency sent to an address that cannot pay for its own transfer. */
+  SWEEP_GAS_FUNDING_WEI: z
+    .string()
+    .regex(/^\d+$/)
+    .default("2000000000000000")
+    .transform((value) => BigInt(value)),
+
+  SWEEP_POLL_MS: z.coerce.number().int().positive().default(15_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -10,7 +10,8 @@
     "migrate": "node src/db/migrate-cli.ts",
     "keygen": "node src/wallet/keygen-cli.ts",
     "indexer": "node src/chain/indexer-cli.ts",
-    "withdrawer": "node src/chain/withdrawal-cli.ts"
+    "withdrawer": "node src/chain/withdrawal-cli.ts",
+    "sweeper": "node src/chain/sweeper-cli.ts"
   },
   "dependencies": {
     "@wallet/shared": "*",
