@@ -18,6 +18,20 @@ node_tools() { "${DC[@]}" run --rm --no-deps node-tools "$*"; }
 # Runs a shell command in the Foundry container.
 forge_run() { "${DC[@]}" run --rm forge "$*"; }
 
+# Solidity dependencies, pinned. OpenZeppelin supplies the primitives that are
+# dangerous to hand-roll in a contract holding reserves -- signature recovery
+# with its malleability check, the EIP-712 domain, reentrancy protection -- and
+# the tag is fixed so every machine compiles against the same audited code.
+OZ_VERSION="5.7.0"
+FORGE_DEPS="set -e
+    [ -d lib/forge-std/src ] || forge install --no-git foundry-rs/forge-std
+    # Checked by version, not by presence: changing the pin above must actually
+    # replace an older copy rather than leave it silently in place.
+    if ! grep -q '\"version\": \"$OZ_VERSION\"' lib/openzeppelin-contracts/package.json 2>/dev/null; then
+        rm -rf lib/openzeppelin-contracts
+        forge install --no-git OpenZeppelin/openzeppelin-contracts@v$OZ_VERSION
+    fi"
+
 # Brings up the backing services and waits until they report healthy.
 need_services() { "${DC[@]}" up -d --wait postgres anvil; }
 
@@ -42,6 +56,7 @@ Checks
   test            Run every test suite
   test-node       Run backend tests (starts Postgres and anvil first)
   test-forge      Run Solidity tests
+  coverage        Solidity coverage for contracts under src/
   typecheck       Type-check the whole workspace
   fmt             Format Solidity sources
   fmt-check       Verify Solidity formatting without writing
@@ -75,10 +90,10 @@ EOF
 case "${1:-help}" in
     install)
         node_tools "npm install"
-        forge_run "forge install --no-git foundry-rs/forge-std"
+        forge_run "$FORGE_DEPS"
         ;;
     install-node)   node_tools "npm install" ;;
-    install-forge)  forge_run "forge install --no-git foundry-rs/forge-std" ;;
+    install-forge)  forge_run "$FORGE_DEPS" ;;
 
     up)      "${DC[@]}" up -d --build --wait ;;
     dev)     "${DC[@]}" up -d --build --wait && "${DC[@]}" logs -f ;;
@@ -97,6 +112,7 @@ case "${1:-help}" in
         node_tools "npm test"
         ;;
     test-forge) forge_run "forge test -vv" ;;
+    coverage)   forge_run "forge coverage --report summary --no-match-coverage '(test|script|mocks)/'" ;;
     typecheck)  node_tools "npm run typecheck" ;;
 
     deploy-token)

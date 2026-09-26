@@ -4,6 +4,10 @@ out = "out"
 test = "test"
 script = "script"
 libs = ["lib"]
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
 
 # Pinned so every machine and CI run produces identical bytecode.
 solc_version = "0.8.35"
