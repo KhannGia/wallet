@@ -202,3 +202,46 @@ export async function fundSigner(
 ): Promise<void> {
     await mintTo(harness, token, signer.address, amount);
 }
+
+/**
+ * Rewrites every block from `block` to the head, without racing anvil's timer.
+ *
+ * The depth has to be read from the head and then handed to anvil_reorg in a
+ * second request. With interval mining running, a block can land between the
+ * two, leaving the reorg one block short of its target -- rare on a fast
+ * machine, frequent enough on a CI runner to fail the suite. Pausing mining for
+ * the duration closes that window entirely rather than widening a margin.
+ *
+ * `guard` is the lowest block the reorg may not reach, typically where the test
+ * token was deployed: a reorg rewrites state, and erasing the token would make
+ * every later transfer a silent no-op.
+ *
+ * Checks afterwards that the target really was replaced, so a miss fails here,
+ * with a clear message, instead of as a confusing assertion somewhere later.
+ */
+export async function reorgFromBlock(
+    harness: ChainHarness,
+    block: bigint,
+    guard: bigint,
+): Promise<void> {
+    await setIntervalMining(harness, 0);
+
+    try {
+        const head = await harness.publicClient.getBlockNumber();
+        const depth = head - block + 1n;
+
+        if (block - 1n < guard) {
+            throw new Error(`a reorg from block ${block} would reach back past block ${guard}`);
+        }
+
+        const before = (await harness.publicClient.getBlock({ blockNumber: block })).hash;
+        await induceReorg(harness, Number(depth));
+        const after = (await harness.publicClient.getBlock({ blockNumber: block })).hash;
+
+        if (before === after) {
+            throw new Error(`reorg of depth ${depth} did not replace block ${block}`);
+        }
+    } finally {
+        await setIntervalMining(harness, 2);
+    }
+}

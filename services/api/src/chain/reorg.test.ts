@@ -9,7 +9,7 @@ import { createUser } from "../ledger/operations.ts";
 import {
     chainHarness,
     deployMockUsdc,
-    induceReorg,
+    reorgFromBlock,
     mineBlocks,
     mintTo,
     type ChainHarness,
@@ -54,25 +54,6 @@ describe("reorg detection", () => {
         await pool.end();
     });
 
-    /**
-     * Rewrites every block from `block` onward.
-     *
-     * The depth is derived from the current head rather than fixed: anvil mines
-     * on a timer, so blocks drift in between recording a deposit and reorganising
-     * it, and a constant depth sometimes fails to reach back far enough. That is
-     * what made the first version of these tests flaky.
-     */
-    const reorgFrom = async (block: bigint): Promise<void> => {
-        const head = await harness.publicClient.getBlockNumber();
-        const depth = head - block + 1n;
-
-        assert.ok(
-            head - depth >= tokenBlock,
-            `a reorg of ${depth} would erase the token deployed at ${tokenBlock}`,
-        );
-
-        await induceReorg(harness, Number(depth));
-    };
 
     /** Creates an account, deposits to it, and indexes the result. */
     const depositAndIndex = async (email: string, amount: bigint) => {
@@ -104,7 +85,7 @@ describe("reorg detection", () => {
 
         // Bury the deposit, then rewrite every block from it onward.
         await mineBlocks(harness, 3);
-        await reorgFrom(deposit.block_number);
+        await reorgFromBlock(harness, deposit.block_number, tokenBlock);
 
         const found = await findReorgedDeposits(pool, harness.publicClient, { fromBlock: 0n });
 
@@ -117,7 +98,7 @@ describe("reorg detection", () => {
     it("compares hashes, not heights", async () => {
         const deposit = await depositAndIndex("hashcheck@test.local", 100_000n);
         await mineBlocks(harness, 3);
-        await reorgFrom(deposit.block_number);
+        await reorgFromBlock(harness, deposit.block_number, tokenBlock);
 
         const found = await findReorgedDeposits(pool, harness.publicClient, { fromBlock: 0n });
 
@@ -140,7 +121,7 @@ describe("reorg detection", () => {
     it("ignores anything below the block it is asked to start from", async () => {
         const deposit = await depositAndIndex("windowed@test.local", 700_000n);
         await mineBlocks(harness, 3);
-        await reorgFrom(deposit.block_number);
+        await reorgFromBlock(harness, deposit.block_number, tokenBlock);
 
         // Blocks below the finalised point cannot be replaced, so rechecking
         // them on every pass would be wasted work.
@@ -154,7 +135,7 @@ describe("reorg detection", () => {
     it("does not re-report a deposit already marked reorged", async () => {
         const deposit = await depositAndIndex("already@test.local", 300_000n);
         await mineBlocks(harness, 3);
-        await reorgFrom(deposit.block_number);
+        await reorgFromBlock(harness, deposit.block_number, tokenBlock);
 
         await pool.query("UPDATE chain_deposits SET status = 'REORGED' WHERE id = $1", [deposit.id]);
 

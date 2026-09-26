@@ -10,7 +10,7 @@ import { findReorgedDeposits } from "../chain/reorg.ts";
 import {
     chainHarness,
     deployMockUsdc,
-    induceReorg,
+    reorgFromBlock,
     mineBlocks,
     mintTo,
     type ChainHarness,
@@ -50,13 +50,6 @@ describe("reorg reversal", () => {
         finality: { kind: "confirmations", depth },
     });
 
-    /** Rewrites every block from `block` onward; depth is derived, never assumed. */
-    const reorgFrom = async (block: bigint): Promise<void> => {
-        const head = await harness.publicClient.getBlockNumber();
-        const depth = head - block + 1n;
-        assert.ok(head - depth >= tokenBlock, "the reorg would erase the token");
-        await induceReorg(harness, Number(depth));
-    };
 
     it("returns a reorged pending deposit to the gateway", async () => {
         const user = await createUser(pool, { email: "revert@test.local", xpub: TEST_XPUB });
@@ -76,7 +69,7 @@ describe("reorg reversal", () => {
         assert.ok(depositBlock);
 
         await mineBlocks(harness, 3);
-        await reorgFrom(depositBlock);
+        await reorgFromBlock(harness, depositBlock, tokenBlock);
 
         const result = await runIndexerOnce(
             { pool, client: harness.publicClient },
@@ -109,7 +102,7 @@ describe("reorg reversal", () => {
         );
         assert.ok(rows[0]);
         await mineBlocks(harness, 3);
-        await reorgFrom(rows[0].block_number);
+        await reorgFromBlock(harness, rows[0].block_number, tokenBlock);
         await runIndexerOnce({ pool, client: harness.publicClient }, config(from, 100n));
 
         // History is evidence. A reorged deposit is marked, never erased.
@@ -133,7 +126,7 @@ describe("reorg reversal", () => {
         assert.ok(depositBlock);
 
         await mineBlocks(harness, 3);
-        await reorgFrom(depositBlock);
+        await reorgFromBlock(harness, depositBlock, tokenBlock);
 
         const second = await runIndexerOnce(
             { pool, client: harness.publicClient },
@@ -197,7 +190,7 @@ describe("reorg reversal", () => {
         );
         assert.ok(rows[0]);
         await mineBlocks(harness, 3);
-        await reorgFrom(rows[0].block_number);
+        await reorgFromBlock(harness, rows[0].block_number, tokenBlock);
 
         const first = await runIndexerOnce({ pool, client: harness.publicClient }, config(from, 100n));
         const second = await runIndexerOnce({ pool, client: harness.publicClient }, config(from, 100n));
