@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P7 complete — the multi-sig vault. Attack tests are P8. See [Roadmap](#part-iii--roadmap).
+**Status:** P8 complete — the vault's attack suite. The signer service is P9. See [Roadmap](#part-iii--roadmap).
 
 ---
 
@@ -309,7 +309,7 @@ demonstrable.
 | Phase  | Work                                                                                                                                   | Demo                                            | Days |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---- |
 | ~~**P7**~~ | `MultisigVault.sol`: M-of-N owners, EIP-712 domain, replay-protecting nonce, signers sorted ascending and unique | Done: 19 tests, 100% line and branch coverage | 5 |
-| **P8** | **Attack tests** — one test per real vulnerability, each proving the contract blocks it: same signature submitted M times, signature malleability (high `s`), cross-chain replay, reentrancy in `execute`, empty owner set / zero threshold | A dedicated test file where every case is a real CVE | 3 |
+| ~~**P8**~~ | **Attack tests** — one test per real vulnerability, each proving the contract blocks it | Done: 12 attacks; each defence removed in turn to confirm which attack it stops | 3 |
 | **P9** | Vault signer service: propose a transaction, collect signatures off-chain over REST, submit once the threshold is met; timelock for large amounts; automatic hot/cold rebalancing | Withdrawing 10k USDC requires 3 of 5 approvals   | 5    |
 
 > **Safe stopping point #2** (week 9) — backend plus Solidity, enough for most roles.
