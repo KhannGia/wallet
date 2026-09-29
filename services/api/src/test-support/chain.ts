@@ -245,3 +245,51 @@ export async function reorgFromBlock(
         await setIntervalMining(harness, 2);
     }
 }
+
+/** Deploys a MultisigVault with the given owners and waits until it is mined. */
+export async function deployMultisigVault(
+    harness: ChainHarness,
+    owners: Address[],
+    threshold: bigint,
+): Promise<Address> {
+    const artifact = await loadArtifact("MultisigVault");
+
+    const hash = await harness.walletClient.deployContract({
+        abi: artifact.abi,
+        bytecode: artifact.bytecode.object,
+        args: [owners, threshold],
+        account: harness.walletClient.account ?? null,
+        chain: localChain,
+    });
+
+    const receipt = await harness.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.contractAddress === null || receipt.contractAddress === undefined) {
+        throw new Error("Vault deployment produced no contract address");
+    }
+    return receipt.contractAddress;
+}
+
+/** Sends native currency from the harness account and waits for it to land. */
+export async function sendEther(harness: ChainHarness, to: Address, value: bigint): Promise<void> {
+    const account = harness.walletClient.account;
+    if (account === undefined) throw new Error("harness wallet has no account");
+
+    const hash = await harness.walletClient.sendTransaction({
+        account,
+        chain: localChain,
+        to,
+        value,
+    });
+    await harness.publicClient.waitForTransactionReceipt({ hash });
+}
+
+/**
+ * Moves the chain's clock forward and mines a block so the new time is
+ * observable. Deadlines are judged against block.timestamp, so this -- not a
+ * sleep -- is how a test reaches one. The change is permanent for the devnet,
+ * which is harmless as long as every test measures time relative to the chain.
+ */
+export async function advanceChainTime(harness: ChainHarness, seconds: number): Promise<void> {
+    await anvilRpc(harness, "evm_increaseTime", [seconds]);
+    await anvilRpc(harness, "anvil_mine", ["0x1"]);
+}
