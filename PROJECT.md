@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P8 complete — the vault's attack suite. The signer service is P9. See [Roadmap](#part-iii--roadmap).
+**Status:** P8 complete; P9 in progress (signature collection done; REST, timelock and rebalancing next). See [Roadmap](#part-iii--roadmap).
 
 ---
 

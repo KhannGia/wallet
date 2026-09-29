@@ -12,10 +12,11 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P8 complete — the vault under attack.** Every class of
-signature and replay attack that has drained real multisigs has a test, and each
-test was checked against a deliberately weakened contract to prove it catches
-what it claims to. The off-chain signer service is P9.
+**Current status: P9 in progress — collecting vault signatures.** A proposal to
+move reserves is opened off-chain, owners sign it with their own wallets as
+EIP-712 typed data, and it is submitted once a quorum exists. The REST layer,
+the timelock for large transfers, and hot/cold rebalancing are the next
+slices.
 
 ## Requirements
 
@@ -128,6 +129,46 @@ curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json
 The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
+
+## What the P9 slice demonstrates so far
+
+**The digest is computed off-chain and checked against the contract.** Owners
+sign what the service computes, and a test compares it to the vault's own
+`hashExecute`. If they ever disagreed, every signature collected would be
+rejected on submission -- after the owners' time had already been spent.
+
+**Every check the vault makes is repeated before a signature is accepted.**
+Signer must be an owner, must not have signed already, and the signature must be
+65 bytes with `s` in the lower half. Skipping any of them would not make the
+vault unsafe -- it would still refuse -- but a proposal would look ready when
+its submission was certain to fail.
+
+**Proposals are tied to a vault nonce.** Every execution consumes one, so a
+proposal is valid for exactly one position in the queue. Only one may collect
+per nonce, and one whose nonce the vault has moved past is marked stale: those
+signatures can never be used, however many times they are retried.
+
+**There is no "failed" state.** A reverted `execute` reverts the vault's nonce
+too, so the approval stays valid and can be resubmitted until its deadline.
+
+**Wei does not fit in a BIGINT.** Postgres BIGINT tops out near 9.22 * 10^18,
+about 9.22 ether, so a ten-ether reserve transfer would overflow it. The value
+column is `NUMERIC(78, 0)`, wide enough for any uint256, and a test moves ten
+ether through it.
+
+**Deadlines are measured in chain time.** The vault compares against
+`block.timestamp`, so that is the clock the service consults, and tests reach a
+deadline with `evm_increaseTime` rather than by sleeping.
+
+**Recording a status and raising an error are separate steps.** The first
+version marked a proposal stale inside a transaction and then threw, which
+rolled the mark back: the caller heard "stale" while the row still said
+"collecting". The status now commits first. The same mistake was in the expiry
+path, which had no test until this was found.
+
+Mutation checks confirm each of those guards is load-bearing: removing the
+low-s check, the owner check, the signer sort, or the nonce check each fails a
+test, as does putting the expiry throw back inside the transaction.
 
 ## What P8 demonstrates
 
