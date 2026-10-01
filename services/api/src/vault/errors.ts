@@ -72,3 +72,13 @@ export class NotEnoughSignatures extends LedgerError {
         );
     }
 }
+
+export class VaultNotConfigured extends LedgerError {
+    constructor() {
+        super(
+            "vault_not_configured",
+            503,
+            "No vault is configured, so proposals are unavailable. Set VAULT_ADDRESS.",
+        );
+    }
+}

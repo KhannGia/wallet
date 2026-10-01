@@ -1,4 +1,5 @@
 import {
+    getAddress,
     parseEventLogs,
     parseSignature,
     recoverAddress,
@@ -39,6 +40,9 @@ export interface Proposal {
     digest: Hex;
     threshold: number;
     status: "COLLECTING" | "EXECUTED" | "STALE" | "EXPIRED";
+    transactionHash: Hex | null;
+    /** Why the last submission did not execute. Cleared by a retry. */
+    failure: string | null;
 }
 
 interface ProposalRow {
@@ -53,6 +57,8 @@ interface ProposalRow {
     digest: string;
     threshold: number;
     status: Proposal["status"];
+    transaction_hash: string | null;
+    failure: string | null;
 }
 
 function toProposal(row: ProposalRow): Proposal {
@@ -70,6 +76,8 @@ function toProposal(row: ProposalRow): Proposal {
         digest: row.digest as Hex,
         threshold: row.threshold,
         status: row.status,
+        transactionHash: row.transaction_hash as Hex | null,
+        failure: row.failure,
     };
 }
 
@@ -409,4 +417,60 @@ export async function submitProposal(
         throw new ProposalExpired(proposalId);
     }
     return outcome;
+}
+
+export interface ProposalDetail extends Proposal {
+    signatures: { signer: Address; signedAt: Date }[];
+}
+
+/** A proposal and who has signed it, in the order they signed. */
+export async function getProposal(pool: Pool, id: bigint): Promise<ProposalDetail> {
+    const proposal = await loadProposal(pool, id);
+    const { rows } = await pool.query<{ signer: string; created_at: Date }>(
+        "SELECT signer, created_at FROM vault_signatures WHERE proposal_id = $1 ORDER BY created_at, signer",
+        [id],
+    );
+    return {
+        ...proposal,
+        signatures: rows.map((row) => ({ signer: getAddress(row.signer), signedAt: row.created_at })),
+    };
+}
+
+/**
+ * Proposals the submitter should try: still collecting, at quorum, and with no
+ * recorded failure.
+ *
+ * A failed submission is not retried on its own. Whatever made the vault
+ * revert -- an unfunded vault, a target that rejects the call -- will usually
+ * still be true a few seconds later, and a submitter that kept trying would
+ * spend gas every pass to learn nothing new. A person clears the failure once
+ * they have fixed the cause.
+ */
+export async function findReadyProposals(pool: Pool): Promise<bigint[]> {
+    const { rows } = await pool.query<{ id: bigint }>(
+        `SELECT p.id
+           FROM vault_proposals p
+          WHERE p.status = 'COLLECTING'
+            AND p.failure IS NULL
+            AND (SELECT COUNT(*) FROM vault_signatures s WHERE s.proposal_id = p.id) >= p.threshold
+          ORDER BY p.id`,
+    );
+    return rows.map((row) => row.id);
+}
+
+/** Clears a recorded failure so the submitter picks the proposal up again. */
+export async function retryProposal(pool: Pool, id: bigint): Promise<Proposal> {
+    const proposal = await loadProposal(pool, id);
+    if (proposal.status !== "COLLECTING") {
+        throw new ProposalNotOpen(proposal.id, proposal.status);
+    }
+
+    const { rows } = await pool.query<ProposalRow>(
+        "UPDATE vault_proposals SET failure = NULL WHERE id = $1 AND status = 'COLLECTING' RETURNING *",
+        [id],
+    );
+    const row = rows[0];
+    // Settled between the read and the update, by a submission in flight.
+    if (row === undefined) return retryProposal(pool, id);
+    return toProposal(row);
 }

@@ -41,3 +41,36 @@ export function executeTypedData(vault: Address, chainId: number, call: VaultCal
 export function executeDigest(vault: Address, chainId: number, call: VaultCall): Hex {
     return hashTypedData(executeTypedData(vault, chainId, call));
 }
+
+/**
+ * The same typed data, in the JSON shape `eth_signTypedData_v4` takes -- what
+ * the API hands an owner to paste into, or send to, their wallet.
+ *
+ * Two differences from the viem form. Integers are decimal strings, because
+ * JSON numbers are doubles and a wei amount does not survive one. And
+ * EIP712Domain is spelled out, because wallets build the domain separator from
+ * `types` and some refuse to sign without it.
+ */
+export function executeTypedDataJson(vault: Address, chainId: number, call: VaultCall) {
+    const typed = executeTypedData(vault, chainId, call);
+    return {
+        domain: typed.domain,
+        types: {
+            EIP712Domain: [
+                { name: "name", type: "string" },
+                { name: "version", type: "string" },
+                { name: "chainId", type: "uint256" },
+                { name: "verifyingContract", type: "address" },
+            ],
+            ...typed.types,
+        },
+        primaryType: typed.primaryType,
+        message: {
+            to: call.to,
+            value: call.value.toString(),
+            data: call.data,
+            nonce: call.nonce.toString(),
+            deadline: call.deadline.toString(),
+        },
+    };
+}
