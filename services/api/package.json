@@ -11,7 +11,8 @@
     "keygen": "node src/wallet/keygen-cli.ts",
     "indexer": "node src/chain/indexer-cli.ts",
     "withdrawer": "node src/chain/withdrawal-cli.ts",
-    "sweeper": "node src/chain/sweeper-cli.ts"
+    "sweeper": "node src/chain/sweeper-cli.ts",
+    "vault-submitter": "node src/vault/submitter-cli.ts"
   },
   "dependencies": {
     "@wallet/shared": "*",

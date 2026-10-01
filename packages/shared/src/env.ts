@@ -89,6 +89,28 @@ const envSchema = z.object({
     .transform((value) => BigInt(value)),
 
   SWEEP_POLL_MS: z.coerce.number().int().positive().default(15_000),
+
+  // --- Vault. Proposals are served by the API; submission is a separate worker. ---
+
+  /** The multisig holding cold reserves. Without it, the proposal API answers 503. */
+  VAULT_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "VAULT_ADDRESS must be a 20-byte hex address")
+    .optional(),
+
+  /**
+   * Pays gas to submit a proposal that has its quorum. It authorises nothing:
+   * the owners' signatures do that, and the vault checks them. It must still
+   * not be the hot wallet's key -- the withdrawal worker allocates that
+   * account's nonces in the database, and a second process sending from it
+   * would collide with them.
+   */
+  VAULT_SUBMITTER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "VAULT_SUBMITTER_PRIVATE_KEY must be a 32-byte hex key")
+    .optional(),
+
+  VAULT_SUBMIT_POLL_MS: z.coerce.number().int().positive().default(5_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

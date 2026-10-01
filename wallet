@@ -70,6 +70,9 @@ Indexer
   withdrawer      Sign and broadcast payouts (holds the spending key)
   sweeper         Consolidate deposit addresses into the hot wallet
 
+Vault
+  vault-submitter Submit vault proposals that have reached their quorum
+
 Database
   migrate         Apply pending migrations
   db-reset        Drop the schema and re-apply every migration (destroys data)
@@ -129,6 +132,10 @@ case "${1:-help}" in
     sweeper)
         need_services
         "${DC[@]}" run --rm node-tools "npm run sweeper --workspace @wallet/api"
+        ;;
+    vault-submitter)
+        need_services
+        "${DC[@]}" run --rm node-tools "npm run vault-submitter --workspace @wallet/api"
         ;;
     withdrawer)
         need_services
