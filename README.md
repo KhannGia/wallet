@@ -12,10 +12,10 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P9 in progress — collecting vault signatures.** A proposal to
-move reserves is opened off-chain, owners sign it with their own wallets as
-EIP-712 typed data, and it is submitted once a quorum exists. The REST layer,
-the timelock for large transfers, and hot/cold rebalancing are the next
+**Current status: P9 in progress — vault approvals over REST.** A proposal to
+move reserves is opened through the API, owners sign the EIP-712 typed data it
+returns with their own wallets, and a separate worker submits it once a quorum
+exists. The timelock for large transfers and hot/cold rebalancing are the next
 slices.
 
 ## Requirements
@@ -60,6 +60,7 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet indexer`  | Watch the chain and credit deposits                    |
 | `./wallet withdrawer` | Sign and broadcast payouts (holds the spending key)  |
 | `./wallet sweeper`  | Consolidate deposit addresses into the hot wallet       |
+| `./wallet vault-submitter` | Submit vault proposals that have reached quorum |
 | `./wallet migrate`  | Apply pending database migrations                      |
 | `./wallet db-reset` | Drop the schema and re-apply migrations (destroys data)|
 | `./wallet psql`     | psql shell against the dev database                    |
@@ -169,6 +170,41 @@ path, which had no test until this was found.
 Mutation checks confirm each of those guards is load-bearing: removing the
 low-s check, the owner check, the signer sort, or the nonce check each fails a
 test, as does putting the expiry throw back inside the transaction.
+
+### Over HTTP
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `POST /api/v1/vault/proposals` | Open a proposal; returns the `eth_signTypedData_v4` JSON for owners |
+| `GET /api/v1/vault/proposals/:id` | Status, signers so far, and the typed data for late signers |
+| `POST /api/v1/vault/proposals/:id/signatures` | An owner submits a signature |
+| `POST /api/v1/vault/proposals/:id/retry` | Hand a failed proposal back to the submitter |
+
+**There is no submit endpoint.** Submitting costs gas, so it needs a key, and
+the API server holds none. `./wallet vault-submitter` submits whatever has
+reached its quorum. Its key only pays gas -- the owners' signatures authorise
+the transfer -- but it is refused if it equals the hot wallet's key, whose
+nonces the withdrawal worker allocates itself.
+
+**The routes need no login to be safe.** Anyone may propose; a signature is
+accepted only if it recovers to a vault owner, and the vault checks every one
+again on chain. A real deployment would still put proposing behind
+authentication, to keep the queue free of noise.
+
+**A failed submission is not retried automatically.** Whatever made the vault
+revert -- usually too little balance -- will still be true a few seconds later,
+and a worker that kept trying would spend gas every pass to learn nothing. The
+reason is recorded on the proposal and a person clears it with `/retry`.
+
+**A lost receipt is not mistaken for a stale proposal.** If the submitter
+broadcasts and then loses its connection before recording the hash, the next
+pass finds the vault's nonce moved. Before calling the proposal stale it looks
+for the vault's `Executed` event at that nonce, and if the call matches, records
+the proposal as executed with that transaction.
+
+**Integers travel as strings, including in the typed data.** A wei amount does
+not survive a JSON number, and a test hashes the JSON exactly as a wallet would
+receive it and compares it to the contract's own digest.
 
 ## What P8 demonstrates
 
