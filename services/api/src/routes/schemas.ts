@@ -63,3 +63,35 @@ export const payoutSchema = z.object({
     to: addressSchema,
     amount: amountSchema,
 });
+
+export const proposalIdSchema = z
+    .string()
+    .regex(/^[1-9][0-9]*$/, "proposal id must be a positive integer")
+    .transform((value) => BigInt(value));
+
+const MAX_UINT256 = 2n ** 256n - 1n;
+
+/** A uint256 as a decimal string. Zero is allowed: a contract call may send no value. */
+const uint256Schema = z
+    .string()
+    .regex(/^(0|[1-9][0-9]*)$/, "must be a non-negative integer as a decimal string")
+    .transform((value) => BigInt(value))
+    .refine((value) => value <= MAX_UINT256, "must fit in a uint256");
+
+export const createProposalSchema = z.object({
+    to: addressSchema,
+    /** Wei. */
+    value: uint256Schema,
+    /** Calldata for the target; "0x" for a plain transfer of native currency. */
+    data: z
+        .string()
+        .regex(/^0x([0-9a-fA-F]{2})*$/, "data must be whole bytes of 0x-prefixed hex")
+        .default("0x")
+        .transform((value) => value.toLowerCase() as `0x${string}`),
+    /** Unix seconds, compared against chain time rather than the server's clock. */
+    deadline: uint256Schema,
+});
+
+export const signatureSchema = z.object({
+    signature: z.string().regex(/^0x[0-9a-fA-F]*$/, "signature must be 0x-prefixed hex"),
+});

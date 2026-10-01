@@ -7,6 +7,7 @@ import { createChainClient } from "./chain/client.ts";
 import { createPool, type Pool } from "./db/pool.ts";
 import { registerErrorHandler } from "./routes/errors.ts";
 import { registerLedgerRoutes } from "./routes/ledger.ts";
+import { registerVaultRoutes } from "./routes/vault.ts";
 
 export interface AppDeps {
   env: Env;
@@ -59,6 +60,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   registerErrorHandler(app);
   registerLedgerRoutes(app, deps.pool, deps.env.WALLET_XPUB, deps.env.USDC_ADDRESS);
+  registerVaultRoutes(app, { pool: deps.pool, client: deps.chain, vault: deps.env.VAULT_ADDRESS });
 
   return app;
 }
