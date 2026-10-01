@@ -228,6 +228,31 @@ export async function addSignature(
     };
 }
 
+/**
+ * The transaction in which the vault executed this proposal's call, if it did.
+ *
+ * Filtered by the indexed nonce, so the node returns at most one log per vault
+ * however long the range: that is what makes searching from genesis
+ * affordable even on providers that cap unfiltered log queries.
+ */
+async function findExecution(client: PublicClient, proposal: Proposal): Promise<Hex | undefined> {
+    const logs = await client.getContractEvents({
+        address: proposal.vault,
+        abi: vaultAbi,
+        eventName: "Executed",
+        args: { nonce: proposal.nonce },
+        fromBlock: "earliest",
+    });
+
+    const match = logs.find(
+        (log) =>
+            log.args.to?.toLowerCase() === proposal.to.toLowerCase() &&
+            log.args.value === proposal.value &&
+            log.args.data?.toLowerCase() === proposal.data.toLowerCase(),
+    );
+    return match?.transactionHash ?? undefined;
+}
+
 export type SubmissionOutcome =
     | { kind: "executed"; transactionHash: Hex }
     | { kind: "reverted"; reason: string };
@@ -275,9 +300,26 @@ export async function submitProposal(
             chainNow(client),
         ]);
 
-        // Another approval executed first. These signatures cover a nonce the
-        // vault will never be at again, so no amount of retrying can use them.
+        // The nonce moved. Either this very proposal executed -- an earlier
+        // submission broadcast it, then lost the receipt and rolled back
+        // before recording the hash -- or a different approval took the slot.
+        // Only the vault's own event can tell those apart, and calling the
+        // first one stale would report a transfer that happened as one that
+        // never can.
         if (current !== proposal.nonce) {
+            const executedHere = await findExecution(client, proposal);
+            if (executedHere !== undefined) {
+                await tx.query(
+                    `UPDATE vault_proposals
+                        SET status = 'EXECUTED', transaction_hash = $2, failure = NULL, settled_at = now()
+                      WHERE id = $1`,
+                    [proposal.id, executedHere],
+                );
+                return { kind: "executed", transactionHash: executedHere };
+            }
+
+            // Another approval executed first. These signatures cover a nonce
+            // the vault will never be at again, so no retry can use them.
             await tx.query(
                 "UPDATE vault_proposals SET status = 'STALE', settled_at = now() WHERE id = $1",
                 [proposal.id],

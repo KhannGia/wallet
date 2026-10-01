@@ -241,6 +241,41 @@ describe("vault proposals", () => {
         assert.equal(rows[0]?.status, "STALE");
     });
 
+    it("recognises its own execution after losing the receipt", async () => {
+        const recipient = freshRecipient();
+        const proposal = await propose(recipient, ONE_ETHER);
+        const signatures: Hex[] = [];
+        for (const owner of owners.slice(0, 3)) {
+            const signature = await signAs(owner, proposal);
+            await addSignature(deps(), proposal.id, signature);
+            signatures.push(signature);
+        }
+
+        // The submission reached the chain, but the process lost the receipt
+        // and rolled back before recording the hash. The vault has moved on to
+        // nonce 1 -- because of this proposal, not despite it.
+        const account = submitter.walletClient.account!;
+        const hash = await submitter.walletClient.writeContract({
+            account,
+            chain: null,
+            address: vault,
+            abi: vaultAbi,
+            functionName: "execute",
+            args: [proposal.to, proposal.value, proposal.data, proposal.deadline, signatures],
+        });
+        await harness.publicClient.waitForTransactionReceipt({ hash });
+
+        const outcome = await submitProposal({ ...deps(), wallet: submitter.walletClient }, proposal.id);
+
+        assert.deepEqual(outcome, { kind: "executed", transactionHash: hash });
+        const { rows } = await pool.query<{ status: string; transaction_hash: string }>(
+            "SELECT status, transaction_hash FROM vault_proposals WHERE id = $1",
+            [proposal.id],
+        );
+        assert.equal(rows[0]?.status, "EXECUTED");
+        assert.equal(rows[0]?.transaction_hash, hash);
+    });
+
     it("rejects a deadline that has already passed on chain", async () => {
         await assert.rejects(
             createProposal(deps(), {
