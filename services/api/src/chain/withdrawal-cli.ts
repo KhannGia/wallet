@@ -10,6 +10,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { createPool } from "../db/pool.ts";
 import { createChainClient } from "./client.ts";
 import { registerHotWallet, syncNonceWithChain } from "./nonce.ts";
+import { assertDistinctSigners, HOT_WALLET_ID } from "./signer-roles.ts";
 import { runWithdrawalWorkerOnce, type WorkerConfig } from "./withdrawal-worker.ts";
 
 const env = loadEnv();
@@ -23,12 +24,22 @@ if (env.HOT_WALLET_PRIVATE_KEY === undefined) {
     process.exit(1);
 }
 
+try {
+    assertDistinctSigners({
+        HOT_WALLET_PRIVATE_KEY: env.HOT_WALLET_PRIVATE_KEY,
+        GAS_FUNDER_PRIVATE_KEY: env.GAS_FUNDER_PRIVATE_KEY,
+        VAULT_SUBMITTER_PRIVATE_KEY: env.VAULT_SUBMITTER_PRIVATE_KEY,
+    });
+} catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+}
+
 const account = privateKeyToAccount(env.HOT_WALLET_PRIVATE_KEY as `0x${string}`);
 const client = createChainClient(env.RPC_URL);
 const wallet = createWalletClient({ account, transport: http(env.RPC_URL) });
 const pool = createPool(env.DATABASE_URL);
 
-const HOT_WALLET_ID = "hot";
 
 const config: WorkerConfig = {
     hotWalletId: HOT_WALLET_ID,

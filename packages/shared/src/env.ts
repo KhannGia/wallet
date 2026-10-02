@@ -81,6 +81,18 @@ const envSchema = z.object({
     .default("1000000")
     .transform((value) => BigInt(value)),
 
+  /**
+   * Sends that native currency. Its own account, never the hot wallet's: the
+   * withdrawal worker allocates the hot wallet's nonces in the database, and a
+   * second process sending from it would take nonces payouts were promised.
+   * It also keeps the sweeper from holding a key that can spend the hot
+   * wallet's tokens, when all it ever needs to send is a little gas.
+   */
+  GAS_FUNDER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "GAS_FUNDER_PRIVATE_KEY must be a 32-byte hex key")
+    .optional(),
+
   /** Native currency sent to an address that cannot pay for its own transfer. */
   SWEEP_GAS_FUNDING_WEI: z
     .string()

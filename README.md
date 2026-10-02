@@ -301,6 +301,17 @@ which means the phrase every deposit address is derived from. That is the most
 dangerous secret in the system, so it lives in its own process -- the API server
 still holds nothing that can spend.
 
+**Every signing process has its own account.** The sweeper first paid gas
+from the hot wallet, letting the node pick the nonce, while the withdrawal
+worker handed out the same account's nonces from the database. Running both,
+a gas funding could take a nonce a payout had been promised, and the payout
+failed for no reason it could explain. The sweeper now pays gas from
+`GAS_FUNDER_PRIVATE_KEY`, and the withdrawer, sweeper and vault submitter all
+refuse to start if any two of their keys are the same account. As a side
+effect the sweeper no longer holds a key that can spend the hot wallet's
+tokens: it reads the hot wallet's address from the row the withdrawal worker
+registered, and warns when fewer than ten gas fundings are left.
+
 **A mismatched mnemonic is caught before anything is signed.** A phrase that
 does not match the deployed xpub derives a perfectly valid key for a completely
 different address. Signing would succeed, the transaction would be accepted, and

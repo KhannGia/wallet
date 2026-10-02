@@ -9,6 +9,7 @@ import { createWalletClient, http, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { createChainClient } from "../chain/client.ts";
+import { assertDistinctSigners } from "../chain/signer-roles.ts";
 import { createPool } from "../db/pool.ts";
 import { submitReadyProposals } from "./submitter.ts";
 
@@ -25,14 +26,14 @@ if (env.VAULT_SUBMITTER_PRIVATE_KEY === undefined || env.VAULT_ADDRESS === undef
 
 const account = privateKeyToAccount(env.VAULT_SUBMITTER_PRIVATE_KEY as `0x${string}`);
 
-if (
-    env.HOT_WALLET_PRIVATE_KEY !== undefined &&
-    privateKeyToAccount(env.HOT_WALLET_PRIVATE_KEY as `0x${string}`).address === account.address
-) {
-    console.error(
-        "VAULT_SUBMITTER_PRIVATE_KEY is the hot wallet's key. Sharing it would put two\n" +
-            "processes on one nonce sequence; generate a separate key.",
-    );
+try {
+    assertDistinctSigners({
+        HOT_WALLET_PRIVATE_KEY: env.HOT_WALLET_PRIVATE_KEY,
+        GAS_FUNDER_PRIVATE_KEY: env.GAS_FUNDER_PRIVATE_KEY,
+        VAULT_SUBMITTER_PRIVATE_KEY: env.VAULT_SUBMITTER_PRIVATE_KEY,
+    });
+} catch (error) {
+    console.error(error instanceof Error ? error.message : error);
     process.exit(1);
 }
 
