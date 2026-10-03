@@ -61,8 +61,15 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 while (running) {
     try {
         for (const { id, outcome } of await submitReadyProposals({ pool, client, wallet })) {
-            const detail = outcome.kind === "executed" ? outcome.transactionHash : outcome.reason;
-            console.log(`proposal ${id}: ${outcome.kind} ${detail}`);
+            // A queued call waiting out its delay is reported every pass;
+            // logging each one would bury everything else.
+            if (outcome.kind === "waiting") continue;
+            const detail =
+                outcome.kind === "executed" ? outcome.transactionHash
+                : outcome.kind === "queued" ? `${outcome.transactionHash} (executable at ${outcome.eta})`
+                : "reason" in outcome ? outcome.reason
+                : "";
+            console.log(`proposal ${id}: ${outcome.kind} ${detail}`.trimEnd());
         }
     } catch (error) {
         // Nothing is half-done between passes: a proposal is either recorded

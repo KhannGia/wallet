@@ -1,4 +1,6 @@
 import {
+    BaseError,
+    ContractFunctionRevertedError,
     getAddress,
     parseEventLogs,
     parseSignature,
@@ -9,7 +11,7 @@ import {
     type WalletClient,
 } from "viem";
 
-import { one, withTransaction, type Pool } from "../db/pool.ts";
+import { one, withTransaction, type Pool, type PoolClient } from "../db/pool.ts";
 import { vaultAbi } from "./abi.ts";
 import {
     DeadlineInPast,
@@ -39,7 +41,10 @@ export interface Proposal {
     deadline: bigint;
     digest: Hex;
     threshold: number;
-    status: "COLLECTING" | "EXECUTED" | "STALE" | "EXPIRED";
+    status: "COLLECTING" | "QUEUED" | "EXECUTED" | "CANCELLED" | "STALE" | "EXPIRED";
+    /** When a queued call becomes executable, in chain time. Null until queued. */
+    eta: bigint | null;
+    queueTransactionHash: Hex | null;
     transactionHash: Hex | null;
     /** Why the last submission did not execute. Cleared by a retry. */
     failure: string | null;
@@ -57,6 +62,8 @@ interface ProposalRow {
     digest: string;
     threshold: number;
     status: Proposal["status"];
+    eta: bigint | null;
+    queue_transaction_hash: string | null;
     transaction_hash: string | null;
     failure: string | null;
 }
@@ -76,6 +83,8 @@ function toProposal(row: ProposalRow): Proposal {
         digest: row.digest as Hex,
         threshold: row.threshold,
         status: row.status,
+        eta: row.eta,
+        queueTransactionHash: row.queue_transaction_hash as Hex | null,
         transactionHash: row.transaction_hash as Hex | null,
         failure: row.failure,
     };
@@ -237,17 +246,22 @@ export async function addSignature(
 }
 
 /**
- * The transaction in which the vault executed this proposal's call, if it did.
+ * The vault's own record of this proposal's call at its nonce, if there is one:
+ * `Executed` once it ran, `Queued` once the timelock accepted it.
  *
  * Filtered by the indexed nonce, so the node returns at most one log per vault
  * however long the range: that is what makes searching from genesis
  * affordable even on providers that cap unfiltered log queries.
  */
-async function findExecution(client: PublicClient, proposal: Proposal): Promise<Hex | undefined> {
+async function findVaultRecord(
+    client: PublicClient,
+    proposal: Proposal,
+    eventName: "Executed" | "Queued",
+): Promise<{ transactionHash: Hex; eta?: bigint } | undefined> {
     const logs = await client.getContractEvents({
         address: proposal.vault,
         abi: vaultAbi,
-        eventName: "Executed",
+        eventName,
         args: { nonce: proposal.nonce },
         fromBlock: "earliest",
     });
@@ -258,11 +272,47 @@ async function findExecution(client: PublicClient, proposal: Proposal): Promise<
             log.args.value === proposal.value &&
             log.args.data?.toLowerCase() === proposal.data.toLowerCase(),
     );
-    return match?.transactionHash ?? undefined;
+    if (match === undefined || match.transactionHash === null) return undefined;
+    const eta = "eta" in match.args ? match.args.eta : undefined;
+    return { transactionHash: match.transactionHash, ...(eta === undefined ? {} : { eta }) };
+}
+
+/** The name of the vault error a call reverted with, if it was one of the vault's. */
+function revertName(error: unknown): string | undefined {
+    if (!(error instanceof BaseError)) return undefined;
+    const reverted = error.walk((e) => e instanceof ContractFunctionRevertedError);
+    return reverted instanceof ContractFunctionRevertedError ? reverted.data?.errorName : undefined;
+}
+
+function firstLine(error: unknown): string {
+    return error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error);
+}
+
+async function recordFailure(db: PoolClient, id: bigint, reason: string): Promise<void> {
+    await db.query("UPDATE vault_proposals SET failure = $2 WHERE id = $1", [id, reason]);
+}
+
+async function markExecuted(db: PoolClient, id: bigint, hash: Hex): Promise<void> {
+    await db.query(
+        `UPDATE vault_proposals
+            SET status = 'EXECUTED', transaction_hash = $2, failure = NULL, settled_at = now()
+          WHERE id = $1`,
+        [id, hash],
+    );
+}
+
+async function markQueued(db: PoolClient, id: bigint, hash: Hex, eta: bigint): Promise<void> {
+    await db.query(
+        `UPDATE vault_proposals
+            SET status = 'QUEUED', queue_transaction_hash = $2, eta = $3, failure = NULL
+          WHERE id = $1`,
+        [id, hash, eta],
+    );
 }
 
 export type SubmissionOutcome =
     | { kind: "executed"; transactionHash: Hex }
+    | { kind: "queued"; transactionHash: Hex; eta: bigint }
     | { kind: "reverted"; reason: string };
 
 /**
@@ -315,15 +365,18 @@ export async function submitProposal(
         // first one stale would report a transfer that happened as one that
         // never can.
         if (current !== proposal.nonce) {
-            const executedHere = await findExecution(client, proposal);
-            if (executedHere !== undefined) {
-                await tx.query(
-                    `UPDATE vault_proposals
-                        SET status = 'EXECUTED', transaction_hash = $2, failure = NULL, settled_at = now()
-                      WHERE id = $1`,
-                    [proposal.id, executedHere],
-                );
-                return { kind: "executed", transactionHash: executedHere };
+            const executed = await findVaultRecord(client, proposal, "Executed");
+            if (executed !== undefined) {
+                await markExecuted(tx, proposal.id, executed.transactionHash);
+                return { kind: "executed", transactionHash: executed.transactionHash };
+            }
+
+            // The same loss can strike a queue: the vault spent the nonce on
+            // this proposal and is holding it for the delay.
+            const queued = await findVaultRecord(client, proposal, "Queued");
+            if (queued?.eta !== undefined) {
+                await markQueued(tx, proposal.id, queued.transactionHash, queued.eta);
+                return { kind: "queued", transactionHash: queued.transactionHash, eta: queued.eta };
             }
 
             // Another approval executed first. These signatures cover a nonce
@@ -356,57 +409,70 @@ export async function submitProposal(
         const account = wallet.account;
         if (account === undefined) throw new Error("vault submitter has no signing account");
 
+        const call = {
+            account,
+            chain: null,
+            address: proposal.vault,
+            abi: vaultAbi,
+            args: [
+                proposal.to,
+                proposal.value,
+                proposal.data,
+                proposal.deadline,
+                signed.map((s) => s.signature as Hex),
+            ],
+        } as const;
+
+        // The vault alone decides whether a call may run at once. Asking it --
+        // by trying execute and reading the revert -- keeps that policy in one
+        // place instead of a copy here that could disagree with it.
+        let path: "execute" | "queue" = "execute";
         let hash: Hex;
         try {
-            hash = await wallet.writeContract({
-                account,
-                chain: null,
-                address: proposal.vault,
-                abi: vaultAbi,
-                functionName: "execute",
-                args: [
-                    proposal.to,
-                    proposal.value,
-                    proposal.data,
-                    proposal.deadline,
-                    signed.map((s) => s.signature as Hex),
-                ],
-            });
+            hash = await wallet.writeContract({ ...call, functionName: "execute" });
         } catch (error) {
-            const reason = error instanceof Error ? error.message.split("\n")[0] ?? "" : String(error);
-            await tx.query("UPDATE vault_proposals SET failure = $2 WHERE id = $1", [
-                proposal.id,
-                reason,
-            ]);
-            return { kind: "reverted", reason };
+            if (revertName(error) !== "TimelockRequired") {
+                const reason = firstLine(error);
+                await recordFailure(tx, proposal.id, reason);
+                return { kind: "reverted", reason };
+            }
+            path = "queue";
+            try {
+                hash = await wallet.writeContract({ ...call, functionName: "queue" });
+            } catch (queueError) {
+                const reason = firstLine(queueError);
+                await recordFailure(tx, proposal.id, reason);
+                return { kind: "reverted", reason };
+            }
         }
 
         const receipt = await client.waitForTransactionReceipt({ hash });
+        const fromVault = (log: { address: string; args: { nonce?: bigint } }) =>
+            log.address.toLowerCase() === proposal.vault.toLowerCase() &&
+            log.args.nonce === proposal.nonce;
 
         // A successful receipt proves nothing by itself -- a lesson this
-        // codebase has already paid for twice. Only the vault's own Executed
-        // event, for this nonce, says the call happened.
-        const executed = parseEventLogs({ abi: vaultAbi, logs: receipt.logs, eventName: "Executed" }).some(
-            (log) =>
-                log.address.toLowerCase() === proposal.vault.toLowerCase() &&
-                log.args.nonce === proposal.nonce,
-        );
+        // codebase has already paid for twice. Only the vault's own event, for
+        // this nonce, says what happened.
+        if (path === "queue") {
+            const queuedLog = parseEventLogs({ abi: vaultAbi, logs: receipt.logs, eventName: "Queued" }).find(fromVault);
+            if (receipt.status !== "success" || queuedLog === undefined) {
+                const reason = `transaction ${hash} did not queue the proposal`;
+                await recordFailure(tx, proposal.id, reason);
+                return { kind: "reverted", reason };
+            }
+            await markQueued(tx, proposal.id, hash, queuedLog.args.eta);
+            return { kind: "queued", transactionHash: hash, eta: queuedLog.args.eta };
+        }
 
+        const executed = parseEventLogs({ abi: vaultAbi, logs: receipt.logs, eventName: "Executed" }).some(fromVault);
         if (receipt.status !== "success" || !executed) {
             const reason = `transaction ${hash} did not execute the proposal`;
-            await tx.query("UPDATE vault_proposals SET failure = $2 WHERE id = $1", [
-                proposal.id,
-                reason,
-            ]);
+            await recordFailure(tx, proposal.id, reason);
             return { kind: "reverted", reason };
         }
 
-        await tx.query(
-            `UPDATE vault_proposals
-                SET status = 'EXECUTED', transaction_hash = $2, failure = NULL, settled_at = now()
-              WHERE id = $1`,
-            [proposal.id, hash],
-        );
+        await markExecuted(tx, proposal.id, hash);
         return { kind: "executed", transactionHash: hash };
     });
 
@@ -458,19 +524,142 @@ export async function findReadyProposals(pool: Pool): Promise<bigint[]> {
     return rows.map((row) => row.id);
 }
 
-/** Clears a recorded failure so the submitter picks the proposal up again. */
+/**
+ * Clears a recorded failure so the submitter picks the proposal up again --
+ * whether it failed on submission or, already queued, on execution.
+ */
 export async function retryProposal(pool: Pool, id: bigint): Promise<Proposal> {
     const proposal = await loadProposal(pool, id);
-    if (proposal.status !== "COLLECTING") {
+    if (proposal.status !== "COLLECTING" && proposal.status !== "QUEUED") {
         throw new ProposalNotOpen(proposal.id, proposal.status);
     }
 
     const { rows } = await pool.query<ProposalRow>(
-        "UPDATE vault_proposals SET failure = NULL WHERE id = $1 AND status = 'COLLECTING' RETURNING *",
+        `UPDATE vault_proposals SET failure = NULL
+          WHERE id = $1 AND status IN ('COLLECTING', 'QUEUED')
+          RETURNING *`,
         [id],
     );
     const row = rows[0];
     // Settled between the read and the update, by a submission in flight.
     if (row === undefined) return retryProposal(pool, id);
     return toProposal(row);
+}
+
+/** Queued proposals with no recorded failure, oldest first. */
+export async function findQueuedProposals(pool: Pool): Promise<bigint[]> {
+    const { rows } = await pool.query<{ id: bigint }>(
+        "SELECT id FROM vault_proposals WHERE status = 'QUEUED' AND failure IS NULL ORDER BY id",
+    );
+    return rows.map((row) => row.id);
+}
+
+export type QueuedOutcome =
+    | { kind: "waiting"; eta: bigint }
+    | { kind: "executed"; transactionHash: Hex }
+    | { kind: "cancelled" }
+    | { kind: "expired" }
+    | { kind: "reverted"; reason: string };
+
+/**
+ * Moves one queued proposal along: executes it once its delay has passed, and
+ * records what happened if the vault no longer holds it.
+ *
+ * The vault is asked first whether the call is still queued, on every pass and
+ * before the delay is up. An owner cancels from their own wallet, straight
+ * against the contract -- the backend holds no owner key and cannot do it for
+ * them -- so the vault is the only place a cancellation shows up.
+ */
+export async function advanceQueued(
+    deps: { pool: Pool; client: PublicClient; wallet: WalletClient },
+    proposalId: bigint,
+): Promise<QueuedOutcome> {
+    const { pool, client, wallet } = deps;
+
+    return withTransaction(pool, async (tx): Promise<QueuedOutcome> => {
+        const { rows } = await tx.query<ProposalRow>(
+            "SELECT * FROM vault_proposals WHERE id = $1 FOR UPDATE",
+            [proposalId],
+        );
+        const row = rows[0];
+        if (row === undefined) throw new ProposalNotFound(proposalId);
+        const proposal = toProposal(row);
+        if (proposal.status !== "QUEUED" || proposal.eta === null) {
+            throw new ProposalNotOpen(proposal.id, proposal.status);
+        }
+
+        const id = await client.readContract({
+            address: proposal.vault,
+            abi: vaultAbi,
+            functionName: "queueId",
+            args: [proposal.nonce, proposal.to, proposal.value, proposal.data],
+        });
+        const [stillQueued, grace, now] = await Promise.all([
+            client.readContract({ address: proposal.vault, abi: vaultAbi, functionName: "queued", args: [id] }),
+            client.readContract({ address: proposal.vault, abi: vaultAbi, functionName: "GRACE_PERIOD" }),
+            chainNow(client),
+        ]);
+
+        // Gone from the queue: it ran -- a receipt lost after executeQueued --
+        // or an owner cancelled it. The vault's events say which.
+        if (stillQueued === 0n) {
+            const executed = await findVaultRecord(client, proposal, "Executed");
+            if (executed !== undefined) {
+                await markExecuted(tx, proposal.id, executed.transactionHash);
+                return { kind: "executed", transactionHash: executed.transactionHash };
+            }
+            await tx.query(
+                "UPDATE vault_proposals SET status = 'CANCELLED', settled_at = now() WHERE id = $1",
+                [proposal.id],
+            );
+            return { kind: "cancelled" };
+        }
+
+        if (now < proposal.eta) return { kind: "waiting", eta: proposal.eta };
+
+        if (now > proposal.eta + grace) {
+            await tx.query(
+                "UPDATE vault_proposals SET status = 'EXPIRED', settled_at = now() WHERE id = $1",
+                [proposal.id],
+            );
+            return { kind: "expired" };
+        }
+
+        const account = wallet.account;
+        if (account === undefined) throw new Error("vault submitter has no signing account");
+
+        let hash: Hex;
+        try {
+            hash = await wallet.writeContract({
+                account,
+                chain: null,
+                address: proposal.vault,
+                abi: vaultAbi,
+                functionName: "executeQueued",
+                args: [proposal.to, proposal.value, proposal.data, proposal.nonce],
+            });
+        } catch (error) {
+            // Typically CallFailed: the vault cannot cover the call yet. The
+            // entry stays queued on chain, so a retry can still run it within
+            // the grace period.
+            const reason = firstLine(error);
+            await recordFailure(tx, proposal.id, reason);
+            return { kind: "reverted", reason };
+        }
+
+        const receipt = await client.waitForTransactionReceipt({ hash });
+        const executed = parseEventLogs({ abi: vaultAbi, logs: receipt.logs, eventName: "Executed" }).some(
+            (log) =>
+                log.address.toLowerCase() === proposal.vault.toLowerCase() &&
+                log.args.nonce === proposal.nonce,
+        );
+        if (receipt.status !== "success" || !executed) {
+            const reason = `transaction ${hash} did not execute the queued proposal`;
+            await recordFailure(tx, proposal.id, reason);
+            return { kind: "reverted", reason };
+        }
+
+        await markExecuted(tx, proposal.id, hash);
+        return { kind: "executed", transactionHash: hash };
+    });
 }
