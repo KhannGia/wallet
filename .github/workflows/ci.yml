@@ -36,9 +36,19 @@ jobs:
         env:
           FOUNDRY_PROFILE: ci
 
+  # The backend suite waits on real blocks from anvil, so its length grows with
+  # every phase. Each group runs on its own runner -- with its own Postgres and
+  # its own chain, so the groups cannot interfere -- and the pipeline takes as
+  # long as the slowest group rather than the sum of all of them.
   backend:
-    name: Backend
+    name: Backend (${{ matrix.group }})
     runs-on: ubuntu-latest
+    strategy:
+      # One group failing should not cancel the others: their results are
+      # still worth having.
+      fail-fast: false
+      matrix:
+        group: [core, chain, vault]
     steps:
       - uses: actions/checkout@v5
 
@@ -70,7 +80,7 @@ jobs:
 
       # Brings up Postgres and anvil, then runs the suite against them.
       - name: Run tests
-        run: ./wallet test-node
+        run: ./wallet test-node ${{ matrix.group }}
 
       - name: Dump service logs on failure
         if: failure()

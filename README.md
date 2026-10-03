@@ -55,6 +55,7 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet up`       | Start the whole stack, waiting until it is healthy     |
 | `./wallet dev`      | Same, then follow logs                                 |
 | `./wallet test`     | Backend tests and Solidity tests                       |
+| `./wallet test-node [core\|chain\|vault]` | Backend tests, all or one group (CI runs the groups in parallel) |
 | `./wallet coverage` | Solidity coverage for contracts under `src/`           |
 | `./wallet typecheck`| Type-check the workspace                               |
 | `./wallet keygen`   | Generate an HD wallet offline (prints a mnemonic once)  |
