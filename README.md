@@ -15,9 +15,10 @@ roadmap.
 **Current status: P9 in progress — vault approvals and timelock.** A proposal to
 move reserves is opened through the API, owners sign the EIP-712 typed data it
 returns with their own wallets, and a separate worker submits it once a quorum
-exists. The vault now enforces an on-chain timelock: anything but a small
-hot-wallet top-up waits a day, during which any single owner can cancel it.
-Wiring the timelock into the backend, then hot/cold rebalancing, are next.
+exists. The vault enforces an on-chain timelock: anything but a small
+hot-wallet top-up is queued and waits out a delay, during which any single
+owner can cancel it, and the submitter carries a proposal through the queue.
+Hot/cold rebalancing is the last P9 slice.
 
 ## Requirements
 
@@ -244,8 +245,29 @@ fast-path. A thief cannot raise the allowance and use it in the same breath.
 queued, so a payout waiting out its delay does not hold up the top-ups behind
 it. A queued call expires 14 days after it matures.
 
-**A delay of zero switches the timelock off** -- which is how the existing suites
-and the backend still deploy it until the backend learns to queue.
+**A delay of zero switches the timelock off** -- which is how the older suites
+deploy it, so they keep testing the multisig on its own.
+
+**The backend asks the vault rather than copying its rules.** The submitter
+tries `execute`; if the vault answers `TimelockRequired`, it queues instead. A
+second copy of the fast-path rules in TypeScript could only ever disagree with
+the contract. A queued proposal then moves through the same worker:
+
+| Status | Meaning |
+| ------ | ------- |
+| `QUEUED` | The vault spent the nonce and holds the call until `eta` |
+| `EXECUTED` | `executeQueued` ran it after the delay |
+| `CANCELLED` | An owner cancelled it on chain |
+| `EXPIRED` | Nobody executed it within the 14-day grace period |
+
+**Cancelling is an owner's own transaction.** The vault accepts `cancel` only
+from an owner, and the backend holds no owner key, so `GET` on a queued proposal
+returns the exact call to send from an owner's wallet. The submitter checks the
+vault's queue on every pass and records the cancellation when the entry is gone.
+
+**A lost receipt is recognised for queueing too.** If the vault's nonce moved
+and it holds a `Queued` event for this proposal's call, the proposal is
+recorded as queued with that transaction, not as stale.
 
 Coverage stays at 100% of lines, statements, branches and functions. Of fourteen
 mutations to the new defences, thirteen fail a test outright. The fourteenth --
