@@ -246,18 +246,34 @@ export async function reorgFromBlock(
     }
 }
 
+export interface VaultConfig {
+    delay: bigint;
+    hotWallet: Address;
+    assets: Address[];
+    limits: bigint[];
+}
+
+/** Every approved call executes at once, as the vault behaved before P9's timelock. */
+export const NO_TIMELOCK: VaultConfig = {
+    delay: 0n,
+    hotWallet: "0x0000000000000000000000000000000000000000",
+    assets: [],
+    limits: [],
+};
+
 /** Deploys a MultisigVault with the given owners and waits until it is mined. */
 export async function deployMultisigVault(
     harness: ChainHarness,
     owners: Address[],
     threshold: bigint,
+    config: VaultConfig = NO_TIMELOCK,
 ): Promise<Address> {
     const artifact = await loadArtifact("MultisigVault");
 
     const hash = await harness.walletClient.deployContract({
         abi: artifact.abi,
         bytecode: artifact.bytecode.object,
-        args: [owners, threshold],
+        args: [owners, threshold, config],
         account: harness.walletClient.account ?? null,
         chain: localChain,
     });

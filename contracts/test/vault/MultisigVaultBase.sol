@@ -29,11 +29,19 @@ abstract contract MultisigVaultBase is Test {
         }
         _sortOwners();
 
-        vault = new MultisigVault(owners, THRESHOLD);
+        vault = new MultisigVault(owners, THRESHOLD, _noTimelock());
         vm.deal(address(vault), 10 ether);
 
         token = new MockERC20("Mock USD Coin", "USDC", 6);
         token.mint(address(vault), 1_000_000_000);
+    }
+
+    /// @dev The timelock switched off: every approved call executes at once.
+    ///      The functional and attack suites test the multisig itself under
+    ///      this config; the timelock has a suite of its own.
+    function _noTimelock() internal pure returns (MultisigVault.Config memory config) {
+        config.assets = new address[](0);
+        config.limits = new uint256[](0);
     }
 
     function _sortOwners() internal {
