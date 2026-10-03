@@ -194,7 +194,7 @@ contract MultisigVaultAttackTest is MultisigVaultBase {
 
     /// A second vault with the same owners, fed signatures meant for the first.
     function test_Attack_CrossVaultReplay() public {
-        MultisigVault twin = new MultisigVault(owners, THRESHOLD);
+        MultisigVault twin = new MultisigVault(owners, THRESHOLD, _noTimelock());
         vm.deal(address(twin), 10 ether);
 
         bytes[] memory sigs = _approve(RECIPIENT, 1 ether, "", deadline);
@@ -253,9 +253,9 @@ contract MultisigVaultAttackTest is MultisigVaultBase {
         address[] memory none = new address[](0);
 
         vm.expectRevert(abi.encodeWithSelector(MultisigVault.InvalidThreshold.selector, 1, 0));
-        new MultisigVault(none, 1);
+        new MultisigVault(none, 1, _noTimelock());
 
         vm.expectRevert(abi.encodeWithSelector(MultisigVault.InvalidThreshold.selector, 0, 0));
-        new MultisigVault(none, 0);
+        new MultisigVault(none, 0, _noTimelock());
     }
 }

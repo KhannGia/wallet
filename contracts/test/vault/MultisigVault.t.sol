@@ -19,26 +19,26 @@ contract MultisigVaultTest is MultisigVaultBase {
 
     function test_RevertWhen_ThresholdIsZero() public {
         vm.expectRevert(abi.encodeWithSelector(MultisigVault.InvalidThreshold.selector, 0, 5));
-        new MultisigVault(owners, 0);
+        new MultisigVault(owners, 0, _noTimelock());
     }
 
     function test_RevertWhen_ThresholdExceedsOwners() public {
         vm.expectRevert(abi.encodeWithSelector(MultisigVault.InvalidThreshold.selector, 6, 5));
-        new MultisigVault(owners, 6);
+        new MultisigVault(owners, 6, _noTimelock());
     }
 
     function test_RevertWhen_OwnerIsZeroAddress() public {
         address[] memory bad = new address[](2);
         bad[0] = owners[0];
         vm.expectRevert(abi.encodeWithSelector(MultisigVault.InvalidOwner.selector, address(0)));
-        new MultisigVault(bad, 1);
+        new MultisigVault(bad, 1, _noTimelock());
     }
 
     function test_RevertWhen_OwnerIsDuplicated() public {
         address[] memory dup = new address[](2);
         (dup[0], dup[1]) = (owners[0], owners[0]);
         vm.expectRevert(abi.encodeWithSelector(MultisigVault.DuplicateOwner.selector, owners[0]));
-        new MultisigVault(dup, 1);
+        new MultisigVault(dup, 1, _noTimelock());
     }
 
     // --- execution ------------------------------------------------------------
