@@ -12,11 +12,12 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P9 in progress — vault approvals over REST.** A proposal to
+**Current status: P9 in progress — vault approvals and timelock.** A proposal to
 move reserves is opened through the API, owners sign the EIP-712 typed data it
 returns with their own wallets, and a separate worker submits it once a quorum
-exists. The timelock for large transfers and hot/cold rebalancing are the next
-slices.
+exists. The vault now enforces an on-chain timelock: anything but a small
+hot-wallet top-up waits a day, during which any single owner can cancel it.
+Wiring the timelock into the backend, then hot/cold rebalancing, are next.
 
 ## Requirements
 
@@ -205,6 +206,52 @@ the proposal as executed with that transaction.
 **Integers travel as strings, including in the typed data.** A wei amount does
 not survive a JSON number, and a test hashes the JSON exactly as a wallet would
 receive it and compares it to the contract's own digest.
+
+### The timelock
+
+Whoever steals a quorum of keys could empty a plain multisig in one
+transaction. The vault now refuses to do that at once:
+
+```
+                    +- hot-wallet top-up within today's allowance -> execute now
+quorum of owners ---+
+                    +- anything else -> queue -> wait `delay` -> executeQueued
+                                           |
+                                           +- any ONE owner may cancel meanwhile
+```
+
+**It is enforced on chain.** A delay kept by the backend protects nothing: a
+thief holding the keys calls the contract directly.
+
+**One owner can cancel.** If a thief holds a quorum, the honest owners left are
+by definition fewer than one. A cancel that needed a quorum would never come.
+The price is that a rogue owner can stall calls -- stall, never move funds.
+
+**The fast path recognises exactly two shapes:** ether to the hot wallet, and a
+token's own `transfer(hotWallet, amount)` with no ether attached and no trailing
+bytes. `approve`, `transferFrom`, transfers to anyone else, and every call to the
+vault itself wait. Each token has its own daily allowance.
+
+**Allowances are daily, not per call.** A per-call cap only changes how many
+transactions a thief needs; a test splits a drain into fifty small top-ups and
+gets exactly one day's allowance out.
+
+**Configuration goes through the timelock too.** Changing the hot wallet, an
+allowance or the delay is a call the vault makes to itself, which is never
+fast-path. A thief cannot raise the allowance and use it in the same breath.
+
+**A queued call does not block the queue.** The nonce is spent when a call is
+queued, so a payout waiting out its delay does not hold up the top-ups behind
+it. A queued call expires 14 days after it matures.
+
+**A delay of zero switches the timelock off** -- which is how the existing suites
+and the backend still deploy it until the backend learns to queue.
+
+Coverage stays at 100% of lines, statements, branches and functions. Of fourteen
+mutations to the new defences, thirteen fail a test outright. The fourteenth --
+dropping the reentrancy guard from `executeQueued` -- survives because the
+queued entry is already deleted before the external call; removing both fails
+the reentrancy attack test, so each layer holds on its own.
 
 ## What P8 demonstrates
 
