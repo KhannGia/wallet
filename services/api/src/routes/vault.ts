@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import type { Address, Hex, PublicClient } from "viem";
+import { encodeFunctionData, type Address, type Hex, type PublicClient } from "viem";
 
 import type { Pool } from "../db/pool.ts";
+import { vaultAbi } from "../vault/abi.ts";
 import { VaultNotConfigured } from "../vault/errors.ts";
 import {
     addSignature,
@@ -37,6 +38,21 @@ function present(proposal: Proposal) {
         deadline: proposal.deadline.toString(),
         threshold: proposal.threshold,
         status: proposal.status,
+        eta: proposal.eta?.toString() ?? null,
+        queueTransactionHash: proposal.queueTransactionHash,
+        // Cancelling is an owner sending this from their own wallet: the vault
+        // only accepts it from an owner, and the API holds no owner key.
+        cancel:
+            proposal.status === "QUEUED"
+                ? {
+                      to: proposal.vault,
+                      data: encodeFunctionData({
+                          abi: vaultAbi,
+                          functionName: "cancel",
+                          args: [proposal.to, proposal.value, proposal.data, proposal.nonce],
+                      }),
+                  }
+                : null,
         transactionHash: proposal.transactionHash,
         failure: proposal.failure,
         digest: proposal.digest,
