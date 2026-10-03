@@ -32,6 +32,39 @@ FORGE_DEPS="set -e
         forge install --no-git OpenZeppelin/openzeppelin-contracts@v$OZ_VERSION
     fi"
 
+# Backend test files, optionally narrowed to one group. CI runs each group as
+# its own job, in parallel; locally a group is a quicker check of one area.
+#
+# "core" is defined as everything the other groups do not claim, rather than
+# as a list of its own, so a new test file always lands in some group. A list
+# would let a file nobody added to it pass CI by never running at all.
+CHAIN_TESTS='^services/api/src/chain/'
+VAULT_TESTS='^services/api/src/vault/|^services/api/src/routes/vault\.test\.ts$'
+backend_tests() {
+    local all
+    all=$(find packages/*/src services/*/src -name '*.test.ts' | sort)
+    case "${1:-}" in
+        "")    echo "$all" ;;
+        chain) grep -E "$CHAIN_TESTS" <<<"$all" ;;
+        vault) grep -E "$VAULT_TESTS" <<<"$all" ;;
+        core)  grep -vE "$CHAIN_TESTS|$VAULT_TESTS" <<<"$all" ;;
+        *)
+            echo "Unknown test group: $1 (expected core, chain or vault)" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Runs the given backend test files. One at a time: the suites share a single
+# database and a single chain, so two running at once would trip over each
+# other's rows and nonces.
+run_backend_tests() {
+    local files
+    files=$(backend_tests "${1:-}") || exit 1
+    need_services
+    node_tools "node --test --test-concurrency=1 $(tr '\n' ' ' <<<"$files")"
+}
+
 # Brings up the backing services and waits until they report healthy.
 need_services() { "${DC[@]}" up -d --wait postgres anvil; }
 
@@ -54,7 +87,9 @@ Runtime
 
 Checks
   test            Run every test suite
-  test-node       Run backend tests (starts Postgres and anvil first)
+  test-node [group]
+                  Run backend tests (starts Postgres and anvil first);
+                  group is core, chain or vault, default all
   test-forge      Run Solidity tests
   coverage        Solidity coverage for contracts under src/
   typecheck       Type-check the whole workspace
@@ -106,14 +141,10 @@ case "${1:-help}" in
     ps)      "${DC[@]}" ps ;;
 
     test)
-        need_services
-        node_tools "npm test"
+        run_backend_tests
         forge_run "forge test -vv"
         ;;
-    test-node)
-        need_services
-        node_tools "npm test"
-        ;;
+    test-node)  run_backend_tests "${2:-}" ;;
     test-forge) forge_run "forge test -vv" ;;
     coverage)   forge_run "forge coverage --report summary --no-match-coverage '(test|script|mocks)/'" ;;
     typecheck)  node_tools "npm run typecheck" ;;
