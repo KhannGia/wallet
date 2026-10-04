@@ -15,6 +15,7 @@ x-node-common: &node-common
   environment:
     DATABASE_URL: postgres://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet}
     RPC_URL: http://anvil:8545
+    BUNDLER_URL: http://bundler:4337
     CHAIN_ID: "31337"
     NODE_ENV: development
     LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -95,6 +96,57 @@ services:
       interval: 3s
       timeout: 5s
       retries: 30
+
+  # Puts the canonical ERC-4337 EntryPoint v0.8 on the local chain, then exits.
+  # The bundler waits for it: it serves only an EntryPoint that exists.
+  entrypoint-setup:
+    image: wallet-foundry:local
+    build:
+      context: .
+      dockerfile: docker/foundry.Dockerfile
+    working_dir: /app/contracts
+    environment:
+      ETH_RPC_URL: http://anvil:8545
+    volumes:
+      - ./:/app
+      - forge_lib:/app/contracts/lib
+    entrypoint: ["sh", "script/deploy-entrypoint.sh"]
+    restart: "no"
+    depends_on:
+      anvil:
+        condition: service_healthy
+
+  # ERC-4337 bundler: takes UserOperations over JSON-RPC and submits them to the
+  # EntryPoint in ordinary transactions it pays for. Pinned by digest, like the
+  # Solidity dependencies, so every machine runs the same build.
+  bundler:
+    image: ghcr.io/pimlicolabs/alto@sha256:f2661042aadefc6a4fc9c5826a14404f574c7ef2de76bdf83fe6a0829137b3c5
+    command:
+      - "--entrypoints=0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
+      - "--rpc-url=http://anvil:8545"
+      # anvil's tenth account, kept out of every test's way. Public devnet key.
+      - "--executor-private-keys=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
+      # Deploys Alto's gas-estimation contracts once, at startup. The same key,
+      # with refilling off, so it never sends while the executor is bundling.
+      - "--utility-private-key=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
+      - "--refilling-wallets=false"
+      - "--port=4337"
+      - "--block-time=2000"
+      # Safe mode enforces ERC-7562 -- what validateUserOp may read and write --
+      # by tracing every operation, and anvil lacks the tracer it needs. Off
+      # here means those rules go unchecked locally; tests must cover them.
+      - "--safe-mode=false"
+      - "--log-level=warn"
+    ports:
+      - "${BUNDLER_PORT:-4337}:4337"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4337/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    depends_on:
+      entrypoint-setup:
+        condition: service_completed_successfully
 
   api:
     <<: *node-common
