@@ -20,7 +20,11 @@ hot-wallet top-up is queued and waits out a delay, during which any single
 owner can cancel it, and the submitter carries a proposal through the queue.
 The hot wallet is kept inside a band automatically: a top-up is proposed to the
 vault's owners when it runs low, and the excess goes back when it holds too
-much. Next is P10, ERC-4337 account abstraction.
+much.
+
+**P10 in progress — ERC-4337 smart accounts.** `SmartAccount` and its CREATE2
+factory work against the real EntryPoint v0.8 in Foundry tests; running them
+through a bundler on the local chain is the next slice.
 
 ## Requirements
 
@@ -135,6 +139,51 @@ curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json
 The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
+
+## What the P10 slice demonstrates so far
+
+A smart account is a contract that is a wallet: the user signs a
+`UserOperation`, a bundler submits it to the EntryPoint, and the EntryPoint asks
+the account whether the signature is good before letting it act.
+
+```
+user signs UserOp -> bundler -> EntryPoint.handleOps()
+                                  1. account.validateUserOp()  checks the signature, pays for gas
+                                  2. account.execute(...)      does the work
+```
+
+**EntryPoint v0.8, pinned for good.** The `UserOperation` layout and its hash
+differ between versions; an account built for one does not work with another.
+`./wallet install-forge` pins `eth-infinitism/account-abstraction` at v0.8.0 the
+same way it pins OpenZeppelin. In v0.8 the `userOpHash` is an EIP-712 digest
+over the operation, the EntryPoint and the chain, which is what makes a
+signature worthless anywhere else -- tests replay one across chains, accounts
+and EntryPoints.
+
+**The address exists before the account does.** The factory deploys with
+CREATE2 and the owner is part of the constructor arguments, so
+`getAddress(owner, salt)` is known up front. Funds can arrive there first; the
+owner's first operation carries `initCode`, deploys the account, and pays for
+its own deployment out of what is already there.
+
+**A bad signature is a verdict, not a revert.** `validateUserOp` uses
+`tryRecover` and returns `SIG_VALIDATION_FAILED`, so a bundler simulating an
+operation -- or estimating gas with a placeholder signature -- gets an answer
+instead of an error.
+
+**Only the EntryPoint's SenderCreator may deploy.** Anyone deploying a victim's
+account first could not take it -- the owner is fixed by the address -- but
+would make the owner's first operation fail with `AA10`.
+
+**Not upgradeable.** An upgrade path is a second way to take an account over,
+and an owner can always move funds to a new one.
+
+**A mutation found a real gap.** Dropping the recover-error check survived the
+tests, because a malformed signature recovers to the zero address and no test
+account was owned by it. Nothing stopped one from being: an account owned by
+the zero address would have answered to anyone sending garbage, guarded by that
+single check. The constructor now rejects it. Twelve attack tests and 100%
+coverage; of nine mutations, eight fail a test and the ninth is now equivalent.
 
 ## What P9 demonstrates
 
