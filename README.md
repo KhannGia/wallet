@@ -22,9 +22,10 @@ The hot wallet is kept inside a band automatically: a top-up is proposed to the
 vault's owners when it runs low, and the excess goes back when it holds too
 much.
 
-**P10 in progress — ERC-4337 smart accounts.** `SmartAccount` and its CREATE2
-factory work against the real EntryPoint v0.8 in Foundry tests; running them
-through a bundler on the local chain is the next slice.
+**P10 complete — ERC-4337 smart accounts.** A user's `SmartAccount` exists at a
+known address before it is deployed, and its first UserOperation -- sent through
+a real bundler to the canonical EntryPoint v0.8 on the local chain -- deploys it
+and moves funds in one step. Next is P11, a paymaster so users need no ether.
 
 ## Requirements
 
@@ -61,7 +62,7 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet up`       | Start the whole stack, waiting until it is healthy     |
 | `./wallet dev`      | Same, then follow logs                                 |
 | `./wallet test`     | Backend tests and Solidity tests                       |
-| `./wallet test-node [core\|chain\|vault]` | Backend tests, all or one group (CI runs the groups in parallel) |
+| `./wallet test-node [core\|chain\|vault\|aa]` | Backend tests, all or one group (CI runs the groups in parallel) |
 | `./wallet coverage` | Solidity coverage for contracts under `src/`           |
 | `./wallet typecheck`| Type-check the workspace                               |
 | `./wallet keygen`   | Generate an HD wallet offline (prints a mnemonic once)  |
@@ -140,7 +141,7 @@ The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
 
-## What the P10 slice demonstrates so far
+## What P10 demonstrates
 
 A smart account is a contract that is a wallet: the user signs a
 `UserOperation`, a bundler submits it to the EntryPoint, and the EntryPoint asks
@@ -184,6 +185,40 @@ account was owned by it. Nothing stopped one from being: an account owned by
 the zero address would have answered to anyone sending garbage, guarded by that
 single check. The constructor now rejects it. Twelve attack tests and 100%
 coverage; of nine mutations, eight fail a test and the ninth is now equivalent.
+
+### Through a real bundler
+
+`docker compose` now runs Alto, Pimlico's bundler, next to anvil, and the
+backend sends UserOperations to it with viem's bundler client:
+
+```
+./wallet test-node aa   # first UserOperation deploys the account and pays USDC
+```
+
+**The EntryPoint is the canonical one, at its canonical address.** Alto
+recognises an EntryPoint's version by its address, so a fresh compile deployed
+anywhere else is not served at all. `entrypoint-setup` replays the mainnet
+deployment instead: the reference repository's own artifact, the salt from the
+mainnet transaction, sent through the CREATE2 deployer anvil ships with. The
+salt was checked locally -- with that artifact it yields exactly
+`0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108` -- and the script verifies the code
+is there afterwards rather than trusting the transaction.
+
+**Safe mode is off locally, and that is a known gap.** Alto enforces ERC-7562 --
+what `validateUserOp` may read and write -- by tracing every operation, and
+anvil lacks the tracer it needs. Those rules go unchecked here; P13's session
+keys are where they start to matter, and tests will have to cover them.
+
+**Nonces run in one sequence.** An ERC-4337 nonce is a 192-bit key plus a
+64-bit sequence. viem draws a fresh time-based key for every operation by
+default, so each is first in its own sequence and they may land in any order.
+For a wallet, where one payment can depend on the one before, the account
+adapter pins the key to 0. A test caught this: the second operation's nonce came
+back as a timestamp, not 1.
+
+**A forged signature never reaches the chain.** The bundler simulates before
+accepting, the account reports the bad signature, and the operation is refused
+with `AA24` -- nothing deployed, nothing spent.
 
 ## What P9 demonstrates
 
