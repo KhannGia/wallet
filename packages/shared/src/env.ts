@@ -5,6 +5,12 @@ import { z } from "zod";
  * malformed environment is deliberate: a wallet that boots with a half-valid
  * config is worse than one that refuses to start.
  */
+/** A token amount in minor units, as a decimal string. */
+const tokenAmount = z
+  .string()
+  .regex(/^\d+$/, "must be a non-negative integer in the token's minor units")
+  .transform((value) => BigInt(value));
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   RPC_URL: z.string().min(1),
@@ -123,6 +129,44 @@ const envSchema = z.object({
     .optional(),
 
   VAULT_SUBMIT_POLL_MS: z.coerce.number().int().positive().default(5_000),
+
+  // --- Rebalancing. All three marks, or none: without them it stays off. ---
+
+  /** Below this available hot balance, a top-up from the vault is proposed. */
+  REBALANCE_LOW: tokenAmount.optional(),
+  /** Where a rebalance in either direction brings the hot balance. */
+  REBALANCE_TARGET: tokenAmount.optional(),
+  /** Above this, the excess goes back to the vault. */
+  REBALANCE_HIGH: tokenAmount.optional(),
+
+  /** How long owners have to sign an automatic top-up. */
+  REBALANCE_PROPOSAL_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
+}).superRefine((env, ctx) => {
+  const marks = [env.REBALANCE_LOW, env.REBALANCE_TARGET, env.REBALANCE_HIGH];
+  const set = marks.filter((mark) => mark !== undefined).length;
+
+  if (set !== 0 && set !== 3) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["REBALANCE_LOW"],
+      message: "set REBALANCE_LOW, REBALANCE_TARGET and REBALANCE_HIGH together, or none",
+    });
+    return;
+  }
+
+  // Two separate thresholds, not one: a balance hovering around a single line
+  // would trigger a rebalance on every pass, and each one costs gas or an
+  // owner's signature.
+  const [low, target, high] = marks;
+  if (low !== undefined && target !== undefined && high !== undefined) {
+    if (!(low < target && target < high)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["REBALANCE_TARGET"],
+        message: "rebalancing needs REBALANCE_LOW < REBALANCE_TARGET < REBALANCE_HIGH",
+      });
+    }
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

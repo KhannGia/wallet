@@ -43,4 +43,26 @@ describe("environment loading", () => {
     it("requires the variables a service cannot run without", () => {
         assert.throws(() => loadEnv({ RPC_URL: "http://x", WALLET_XPUB: "y" }), /DATABASE_URL/);
     });
+
+    it("leaves rebalancing off unless all three marks are set", () => {
+        const env = loadEnv(base);
+        assert.equal(env.REBALANCE_LOW, undefined);
+
+        assert.throws(
+            () => loadEnv({ ...base, REBALANCE_LOW: "100", REBALANCE_TARGET: "500" }),
+            /together, or none/,
+        );
+    });
+
+    it("requires the rebalancing marks in order", () => {
+        const marks = { REBALANCE_LOW: "100", REBALANCE_TARGET: "500", REBALANCE_HIGH: "900" };
+        const env = loadEnv({ ...base, ...marks });
+        assert.equal(env.REBALANCE_TARGET, 500n);
+
+        // A target outside the band would rebalance straight back out of it.
+        assert.throws(
+            () => loadEnv({ ...base, ...marks, REBALANCE_TARGET: "1000" }),
+            /REBALANCE_LOW < REBALANCE_TARGET < REBALANCE_HIGH/,
+        );
+    });
 });
