@@ -93,14 +93,15 @@ export async function requestWithdrawal(
 
 interface WithdrawalRow {
     id: bigint;
-    account_id: bigint;
+    kind: "PAYOUT" | "REBALANCE";
+    account_id: bigint | null;
     amount: bigint;
     status: string;
 }
 
 async function loadWithdrawal(pool: Pool, withdrawalId: bigint): Promise<WithdrawalRow> {
     const { rows } = await pool.query<WithdrawalRow>(
-        "SELECT id, account_id, amount, status FROM chain_withdrawals WHERE id = $1",
+        "SELECT id, kind, account_id, amount, status FROM chain_withdrawals WHERE id = $1",
         [withdrawalId],
     );
 
@@ -112,6 +113,17 @@ export async function settleWithdrawal(pool: Pool, withdrawalId: bigint): Promis
     const withdrawal = await loadWithdrawal(pool, withdrawalId);
     if (withdrawal.status === "CONFIRMED") {
         return false;
+    }
+
+    // A rebalance moved the platform's own tokens to its vault. Nobody's
+    // balance changed, so there is nothing to post -- only a status to record.
+    if (withdrawal.kind === "REBALANCE") {
+        const { rowCount } = await pool.query(
+            `UPDATE chain_withdrawals SET status = 'CONFIRMED', settled_at = now()
+              WHERE id = $1 AND status <> 'CONFIRMED'`,
+            [withdrawalId],
+        );
+        return rowCount === 1;
     }
 
     const outcome = await runIdempotent(
@@ -160,6 +172,19 @@ export async function refundWithdrawal(
         return false;
     }
 
+    // Nothing was reserved for a rebalance, so nothing goes back: the tokens
+    // simply stay in the hot wallet, and the next pass plans afresh.
+    if (withdrawal.kind === "REBALANCE") {
+        const { rowCount } = await pool.query(
+            `UPDATE chain_withdrawals SET status = 'FAILED', failure = $2, settled_at = now()
+              WHERE id = $1 AND status NOT IN ('FAILED', 'CONFIRMED')`,
+            [withdrawalId, reason],
+        );
+        return rowCount === 1;
+    }
+    const accountId = withdrawal.account_id;
+    if (accountId === null) throw new Error(`payout ${withdrawalId} has no account`);
+
     const outcome = await runIdempotent(
         pool,
         {
@@ -172,7 +197,7 @@ export async function refundWithdrawal(
 
             await postEntries(client, ledgerTxId, [
                 { accountId: reserve, amount: -withdrawal.amount },
-                { accountId: withdrawal.account_id, amount: withdrawal.amount },
+                { accountId, amount: withdrawal.amount },
             ]);
 
             await client.query(
