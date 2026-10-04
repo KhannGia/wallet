@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P0–P9 complete; P10 in progress (smart account and factory done; bundler next). See [Roadmap](#part-iii--roadmap).
+**Status:** P0–P10 complete; P11 (paymaster) next. See [Roadmap](#part-iii--roadmap).
 
 ---
 
@@ -323,7 +323,7 @@ demonstrable.
 
 | Phase   | Work                                                                                                                                        | Demo                                                    | Days |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---- |
-| **P10** | `SmartAccount.sol` implementing `IAccount.validateUserOp()` plus `AccountFactory` using CREATE2 (counterfactual address, lazy deploy on first use). Run a local bundler against anvil | First UserOperation goes through the bundler             | 6    |
+| ~~**P10**~~ | `SmartAccount.sol` implementing `IAccount.validateUserOp()` plus `AccountFactory` using CREATE2 (counterfactual address, lazy deploy on first use). Run a local bundler against anvil | Done: canonical EntryPoint v0.8 on anvil, Alto bundler, first UserOperation deploys the account and pays USDC | 6    |
 | **P11** | `VerifyingPaymaster`: off-chain signed sponsorship, staked deposit in the EntryPoint, backend policy engine (per-user daily caps, allowed selectors only) | A user with **zero ETH** transfers USDC successfully     | 5    |
 | **P12** | Social recovery: guardian set, owner-rotation proposal with a **timelock** (e.g. 48h) to blunt guardian collusion, plus emergency cancel     | Key lost -> three guardians restore access after timelock | 5    |
 | **P13** | Session keys: scoped secondary keys (expiry, allowed selectors, spending cap). Mind the **ERC-7562 validation rules** — `validateUserOp` may not touch out-of-scope storage or certain opcodes, or bundlers reject the UserOp | A 24h session key that can only call `transfer`          | 4    |
