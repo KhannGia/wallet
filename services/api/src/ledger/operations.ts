@@ -343,7 +343,9 @@ export async function reconcile(pool: Pool): Promise<Reconciliation> {
                      (SELECT balance FROM accounts WHERE system_key = 'PENDING_WITHDRAWALS') AS held,
                      (SELECT COALESCE(SUM(amount), 0)::BIGINT
                         FROM chain_withdrawals
-                       WHERE status IN ('PENDING', 'SUBMITTED')) AS owed`,
+                       -- A rebalance reserves nothing in the ledger, so it
+                       -- has no counterpart in PENDING_WITHDRAWALS.
+                       WHERE kind = 'PAYOUT' AND status IN ('PENDING', 'SUBMITTED')) AS owed`,
             )
         ).rows,
         "reserved withdrawals",
