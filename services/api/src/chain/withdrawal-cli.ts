@@ -4,12 +4,13 @@
 // separate service from the API for exactly that reason: compromising the API
 // server gives an attacker no way to spend.
 import { loadEnv } from "@wallet/shared";
-import { createWalletClient, http } from "viem";
+import { createWalletClient, http, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { createPool } from "../db/pool.ts";
 import { createChainClient } from "./client.ts";
 import { registerHotWallet, syncNonceWithChain } from "./nonce.ts";
+import { describePlan, queueExcessReturn, rebalanceMarks } from "./rebalance.ts";
 import { assertDistinctSigners, HOT_WALLET_ID } from "./signer-roles.ts";
 import { runWithdrawalWorkerOnce, type WorkerConfig } from "./withdrawal-worker.ts";
 
@@ -78,6 +79,15 @@ console.log(
         `nonce ${sync.storedNext} (chain ${sync.chainCount}, ${sync.action})`,
 );
 
+// Hot -> cold rebalancing, if configured: when the hot wallet holds more than it
+// needs, queue the excess back to the vault. The worker sends it like a payout,
+// on the same nonce sequence -- which is why it is planned here and nowhere else.
+const marks = rebalanceMarks(env);
+if (marks !== undefined && env.VAULT_ADDRESS === undefined) {
+    console.error("Rebalancing is configured but VAULT_ADDRESS is not; there is nowhere to return excess.");
+    process.exit(1);
+}
+
 let running = true;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
@@ -87,6 +97,17 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 while (running) {
     try {
+        if (marks !== undefined) {
+            const plan = await queueExcessReturn(pool, client, {
+                token: env.USDC_ADDRESS as Address,
+                vault: env.VAULT_ADDRESS as Address,
+                hotWallet: account.address,
+                marks,
+            });
+            const line = describePlan(plan);
+            if (line !== undefined) console.log(`rebalance: ${line}`);
+        }
+
         const result = await runWithdrawalWorkerOnce({ pool, client, wallet }, config);
 
         const activity =

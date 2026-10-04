@@ -22,6 +22,8 @@ export const vaultAbi = parseAbi([
     "function cancel(address to, uint256 value, bytes data, uint256 queuedNonce)",
     "function queueId(uint256 queuedNonce, address to, uint256 value, bytes data) pure returns (bytes32)",
     "function queued(bytes32 id) view returns (uint256)",
+    "function hotWallet() view returns (address)",
+    "function remainingToday(address asset) view returns (uint256)",
     "event Queued(uint256 indexed nonce, address indexed to, uint256 value, bytes data, uint256 eta)",
     "event Cancelled(uint256 indexed nonce, address indexed by)",
 

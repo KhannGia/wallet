@@ -9,7 +9,8 @@ import { createWalletClient, http, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { createChainClient } from "../chain/client.ts";
-import { assertDistinctSigners } from "../chain/signer-roles.ts";
+import { describePlan, proposeTopUp, rebalanceMarks } from "../chain/rebalance.ts";
+import { assertDistinctSigners, registeredHotWallet } from "../chain/signer-roles.ts";
 import { createPool } from "../db/pool.ts";
 import { submitReadyProposals } from "./submitter.ts";
 
@@ -51,6 +52,31 @@ if (code === undefined || code === "0x") {
 
 console.log(`vault submitter paying gas from ${account.address} for vault ${env.VAULT_ADDRESS}`);
 
+// Cold -> hot rebalancing, if configured: when the hot wallet runs low, open a
+// top-up proposal for the owners to sign. Proposing needs no key at all.
+const marks = rebalanceMarks(env);
+if (marks !== undefined && env.USDC_ADDRESS === undefined) {
+    console.error("Rebalancing is configured but USDC_ADDRESS is not; there is no token to move.");
+    process.exit(1);
+}
+
+async function rebalance(): Promise<void> {
+    if (marks === undefined || env.USDC_ADDRESS === undefined) return;
+    const plan = await proposeTopUp(
+        { pool, client },
+        {
+            token: env.USDC_ADDRESS as Address,
+            vault: env.VAULT_ADDRESS as Address,
+            // Read each pass: the withdrawal worker may register after this starts.
+            hotWallet: await registeredHotWallet(pool),
+            marks,
+            proposalTtlSeconds: env.REBALANCE_PROPOSAL_TTL_SECONDS,
+        },
+    );
+    const line = describePlan(plan);
+    if (line !== undefined) console.log(`rebalance: ${line} (proposal ${plan.proposalId})`);
+}
+
 let running = true;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
@@ -71,6 +97,8 @@ while (running) {
                 : "";
             console.log(`proposal ${id}: ${outcome.kind} ${detail}`.trimEnd());
         }
+
+        await rebalance();
     } catch (error) {
         // Nothing is half-done between passes: a proposal is either recorded
         // as settled or still collecting, so the next pass simply looks again.

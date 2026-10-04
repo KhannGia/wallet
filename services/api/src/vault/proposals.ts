@@ -122,7 +122,15 @@ function isUniqueViolation(error: unknown): boolean {
  */
 export async function createProposal(
     deps: { pool: Pool; client: PublicClient },
-    params: { vault: Address; to: Address; value: bigint; data: Hex; deadline: bigint },
+    params: {
+        vault: Address;
+        to: Address;
+        value: bigint;
+        data: Hex;
+        deadline: bigint;
+        /** REBALANCE marks a top-up the rebalancer opened on its own. */
+        kind?: "MANUAL" | "REBALANCE";
+    },
 ): Promise<Proposal> {
     const { pool, client } = deps;
 
@@ -148,8 +156,9 @@ export async function createProposal(
     try {
         const { rows } = await pool.query<ProposalRow>(
             `INSERT INTO vault_proposals
-                 (vault_address, chain_id, to_address, value, data, nonce, deadline, digest, threshold)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 (vault_address, chain_id, to_address, value, data, nonce, deadline, digest,
+                  threshold, kind)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
             [
                 params.vault,
@@ -161,6 +170,7 @@ export async function createProposal(
                 params.deadline,
                 digest,
                 Number(threshold),
+                params.kind ?? "MANUAL",
             ],
         );
         return toProposal(one(rows, "proposal"));
