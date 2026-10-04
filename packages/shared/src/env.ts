@@ -14,6 +14,8 @@ const tokenAmount = z
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   RPC_URL: z.string().min(1),
+  /** ERC-4337 bundler JSON-RPC. Only smart-account flows need it. */
+  BUNDLER_URL: z.string().min(1).optional(),
 
   // Extended PUBLIC key only. loadWatchOnlyKey rejects an xprv, so a
   // misconfiguration here fails at startup rather than quietly giving the API
