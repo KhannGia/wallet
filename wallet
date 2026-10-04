@@ -23,13 +23,21 @@ forge_run() { "${DC[@]}" run --rm forge "$*"; }
 # with its malleability check, the EIP-712 domain, reentrancy protection -- and
 # the tag is fixed so every machine compiles against the same audited code.
 OZ_VERSION="5.7.0"
+# The ERC-4337 EntryPoint, from the reference implementation. Pinned for good:
+# the UserOperation layout and its hash differ between versions, and an account
+# built for one cannot be used with another.
+AA_VERSION="0.8.0"
 FORGE_DEPS="set -e
     [ -d lib/forge-std/src ] || forge install --no-git foundry-rs/forge-std
-    # Checked by version, not by presence: changing the pin above must actually
+    # Checked by version, not by presence: changing a pin above must actually
     # replace an older copy rather than leave it silently in place.
     if ! grep -q '\"version\": \"$OZ_VERSION\"' lib/openzeppelin-contracts/package.json 2>/dev/null; then
         rm -rf lib/openzeppelin-contracts
         forge install --no-git OpenZeppelin/openzeppelin-contracts@v$OZ_VERSION
+    fi
+    if ! grep -q '\"version\": \"$AA_VERSION\"' lib/account-abstraction/package.json 2>/dev/null; then
+        rm -rf lib/account-abstraction
+        forge install --no-git eth-infinitism/account-abstraction@v$AA_VERSION
     fi"
 
 # Backend test files, optionally narrowed to one group. CI runs each group as
