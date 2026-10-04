@@ -12,13 +12,15 @@ roadmap.
 > **Testnet only.** This is a learning project. It must never hold third-party
 > funds, and it is not a licensed custody service.
 
-**Current status: P9 in progress — vault approvals and timelock.** A proposal to
+**Current status: P9 complete — the multisig vault in operation.** A proposal to
 move reserves is opened through the API, owners sign the EIP-712 typed data it
 returns with their own wallets, and a separate worker submits it once a quorum
 exists. The vault enforces an on-chain timelock: anything but a small
 hot-wallet top-up is queued and waits out a delay, during which any single
 owner can cancel it, and the submitter carries a proposal through the queue.
-Hot/cold rebalancing is the last P9 slice.
+The hot wallet is kept inside a band automatically: a top-up is proposed to the
+vault's owners when it runs low, and the excess goes back when it holds too
+much. Next is P10, ERC-4337 account abstraction.
 
 ## Requirements
 
@@ -134,7 +136,7 @@ The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
 
-## What the P9 slice demonstrates so far
+## What P9 demonstrates
 
 **The digest is computed off-chain and checked against the contract.** Owners
 sign what the service computes, and a test compares it to the vault's own
@@ -275,6 +277,43 @@ mutations to the new defences, thirteen fail a test outright. The fourteenth --
 dropping the reentrancy guard from `executeQueued` -- survives because the
 queued entry is already deleted before the external call; removing both fails
 the reentrancy attack test, so each layer holds on its own.
+
+### Hot/cold rebalancing
+
+The hot wallet's key is online, so what it holds is what a breach costs; but a
+hot wallet that runs dry stalls every payout. Rebalancing keeps its
+*available* balance -- on chain, minus payouts already promised -- inside a
+band set by three marks:
+
+```
+  above HIGH  -> the withdrawal worker returns the excess to the vault
+  ---- TARGET   (where a rebalance in either direction lands)
+  below LOW   -> the vault submitter proposes a top-up for owners to sign
+```
+
+**Two marks, not one.** A balance hovering around a single threshold would
+rebalance on every pass, each time costing gas or an owner's signature.
+Between LOW and HIGH nothing happens.
+
+**A top-up is proposed, never signed.** Moving reserves out of the vault takes
+owners' signatures; a process signing for them would make the multisig a
+formality. The proposal is sized to the vault's daily fast-path allowance, so
+the signatures are all it takes -- no timelock wait while payouts stall. It is
+refused outright if the vault's `hotWallet()` is not the account the withdrawal
+worker registered.
+
+**A return rides the payout machinery.** Sending from the hot wallet needs the
+hot wallet's key, and only the withdrawal worker may use it. So the return is a
+`chain_withdrawals` row of kind `REBALANCE`, getting the same nonce allocation,
+stuck replacement and abandonment as a payout -- but no account and no ledger
+entries, which the schema enforces both ways. The platform moving its own
+tokens changes nobody's balance.
+
+**Reconciliation had to learn the difference.** It compared every in-flight
+withdrawal against `PENDING_WITHDRAWALS`. A rebalance reserves nothing there, so
+counting it would report a healthy ledger as unbalanced; a test checks the
+ledger reconciles while a return is in flight. Seven mutations to these
+defences each fail a test.
 
 ## What P8 demonstrates
 
