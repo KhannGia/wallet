@@ -48,6 +48,7 @@ FORGE_DEPS="set -e
 # would let a file nobody added to it pass CI by never running at all.
 CHAIN_TESTS='^services/api/src/chain/'
 VAULT_TESTS='^services/api/src/vault/|^services/api/src/routes/vault\.test\.ts$'
+AA_TESTS='^services/api/src/aa/'
 backend_tests() {
     local all
     all=$(find packages/*/src services/*/src -name '*.test.ts' | sort)
@@ -55,9 +56,10 @@ backend_tests() {
         "")    echo "$all" ;;
         chain) grep -E "$CHAIN_TESTS" <<<"$all" ;;
         vault) grep -E "$VAULT_TESTS" <<<"$all" ;;
-        core)  grep -vE "$CHAIN_TESTS|$VAULT_TESTS" <<<"$all" ;;
+        aa)    grep -E "$AA_TESTS" <<<"$all" ;;
+        core)  grep -vE "$CHAIN_TESTS|$VAULT_TESTS|$AA_TESTS" <<<"$all" ;;
         *)
-            echo "Unknown test group: $1 (expected core, chain or vault)" >&2
+            echo "Unknown test group: $1 (expected core, chain, vault or aa)" >&2
             return 1
             ;;
     esac
@@ -70,6 +72,13 @@ run_backend_tests() {
     local files
     files=$(backend_tests "${1:-}") || exit 1
     need_services
+    # Only the smart-account tests talk to the bundler; the other groups skip
+    # starting it, and the EntryPoint deployment it waits for. Recreated every
+    # time: a restarted anvil has lost the EntryPoint and the bundler's own
+    # contracts, while a bundler container left running would not notice.
+    case "${1:-}" in
+        ""|aa) "${DC[@]}" up -d --wait --force-recreate entrypoint-setup bundler ;;
+    esac
     node_tools "node --test --test-concurrency=1 $(tr '\n' ' ' <<<"$files")"
 }
 
@@ -97,7 +106,7 @@ Checks
   test            Run every test suite
   test-node [group]
                   Run backend tests (starts Postgres and anvil first);
-                  group is core, chain or vault, default all
+                  group is core, chain, vault or aa, default all
   test-forge      Run Solidity tests
   coverage        Solidity coverage for contracts under src/
   typecheck       Type-check the whole workspace
