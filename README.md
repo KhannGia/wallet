@@ -25,7 +25,12 @@ much.
 **P10 complete — ERC-4337 smart accounts.** A user's `SmartAccount` exists at a
 known address before it is deployed, and its first UserOperation -- sent through
 a real bundler to the canonical EntryPoint v0.8 on the local chain -- deploys it
-and moves funds in one step. Next is P11, a paymaster so users need no ether.
+and moves funds in one step.
+
+**P11 in progress — a paymaster, so users need no ether.** `VerifyingPaymaster`
+pays gas for operations the platform has signed a sponsorship for; an account
+that never held ether deploys itself and moves USDC in Foundry tests. The
+sponsorship service and its policy are the next slice.
 
 ## Requirements
 
@@ -140,6 +145,44 @@ curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json
 The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
+
+## What the P11 slice demonstrates so far
+
+A smart account still pays its own gas, in ether -- which a user holding only
+USDC does not have. A **paymaster** pays instead, out of its deposit in the
+EntryPoint. That deposit is the platform's money, so the paymaster pays only for
+an operation carrying the platform's signature over *that exact operation*:
+
+```
+wallet -> sponsorship service: "will you pay for this?"   (policy decides)
+       <- signature over the operation, valid until T
+wallet -> bundler -> EntryPoint -> VerifyingPaymaster checks the signature, pays
+```
+
+**The sponsorship covers everything that sets the bill.** The paymaster pays up
+to gas limit times fee, so the signed EIP-712 struct includes the account's gas
+limits, `preVerificationGas`, the fees and the paymaster's own gas limit, along
+with the sender, nonce, initCode and call. Raising any of them after the sponsor
+signs -- tested one by one -- invalidates the sponsorship.
+
+**Every sponsorship expires.** ERC-4337 reads a `validUntil` of zero as
+"forever"; this paymaster treats it as a failed signature, so a bug in the
+service cannot mint a sponsorship that never runs out. The time range itself is
+enforced by the EntryPoint (`AA32`), since validation may not read the clock.
+
+**Validation reads only immutables.** ERC-7562 restricts what a paymaster may
+read while validating, and bundlers throttle one that breaks the rules. The
+signer is fixed at deployment; rotating it means deploying a new paymaster.
+
+**Deposit and stake are separate.** The deposit pays for gas; the stake is
+locked collateral bundlers look at before trusting a paymaster, returned only
+after an unstake delay. Only the owner (`Ownable2Step`) can withdraw either.
+
+Fourteen attack tests -- a stranger's sponsorship, a swapped call, reuse for the
+next nonce, raised gas or fees, expired, not yet valid, never expiring, another
+chain, another paymaster, truncated data, an empty deposit, an outsider
+withdrawing -- and 100% coverage. Of thirteen mutations, twelve fail a test; the
+thirteenth is equivalent because the signer can never be the zero address.
 
 ## What P10 demonstrates
 

@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P0–P10 complete; P11 (paymaster) next. See [Roadmap](#part-iii--roadmap).
+**Status:** P0–P10 complete; P11 in progress (paymaster contract done; sponsorship service next). See [Roadmap](#part-iii--roadmap).
 
 ---
 
