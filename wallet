@@ -125,6 +125,10 @@ Indexer
 Vault
   vault-submitter Submit vault proposals that have reached their quorum
 
+Smart accounts
+  deploy-aa       Deploy the account factory and the paymaster (local only)
+  paymaster       Serve gas sponsorships over ERC-7677 (holds the signer key)
+
 Database
   migrate         Apply pending migrations
   db-reset        Drop the schema and re-apply every migration (destroys data)
@@ -180,6 +184,15 @@ case "${1:-help}" in
     sweeper)
         need_services
         "${DC[@]}" run --rm node-tools "npm run sweeper --workspace @wallet/api"
+        ;;
+    deploy-aa)
+        "${DC[@]}" up -d --wait bundler
+        "${DC[@]}" run --rm -e PAYMASTER_SIGNER_PRIVATE_KEY forge "sh script/deploy-aa.sh"
+        ;;
+    paymaster)
+        need_services
+        "${DC[@]}" run --rm -p "${PAYMASTER_PORT:-4338}:${PAYMASTER_PORT:-4338}" node-tools \
+            "npm run paymaster --workspace @wallet/api"
         ;;
     vault-submitter)
         need_services
