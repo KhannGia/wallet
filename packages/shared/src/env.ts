@@ -141,6 +141,32 @@ const envSchema = z.object({
   /** Above this, the excess goes back to the vault. */
   REBALANCE_HIGH: tokenAmount.optional(),
 
+  // --- Paymaster. Its key spends the paymaster's deposit, so it runs apart. ---
+
+  /** Signs sponsorships. VerifyingPaymaster trusts exactly this key's address. */
+  PAYMASTER_SIGNER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "PAYMASTER_SIGNER_PRIVATE_KEY must be a 32-byte hex key")
+    .optional(),
+  PAYMASTER_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "PAYMASTER_ADDRESS must be a 20-byte hex address")
+    .optional(),
+  /** Only accounts this factory deploys are sponsored through deployment. */
+  ACCOUNT_FACTORY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "ACCOUNT_FACTORY_ADDRESS must be a 20-byte hex address")
+    .optional(),
+  /** Most wei of gas one account may be promised in a rolling day. */
+  PAYMASTER_DAILY_GAS_CAP_WEI: z
+    .string()
+    .regex(/^\d+$/)
+    .default("10000000000000000")
+    .transform((value) => BigInt(value)),
+  /** How long a sponsorship stays usable. Short: it is a signed promise to pay. */
+  PAYMASTER_SPONSORSHIP_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+  PAYMASTER_PORT: z.coerce.number().int().positive().default(4338),
+
   /** How long owners have to sign an automatic top-up. */
   REBALANCE_PROPOSAL_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
 }).superRefine((env, ctx) => {

@@ -30,6 +30,7 @@ try {
         HOT_WALLET_PRIVATE_KEY: env.HOT_WALLET_PRIVATE_KEY,
         GAS_FUNDER_PRIVATE_KEY: env.GAS_FUNDER_PRIVATE_KEY,
         VAULT_SUBMITTER_PRIVATE_KEY: env.VAULT_SUBMITTER_PRIVATE_KEY,
+        PAYMASTER_SIGNER_PRIVATE_KEY: env.PAYMASTER_SIGNER_PRIVATE_KEY,
     });
 } catch (error) {
     console.error(error instanceof Error ? error.message : error);
