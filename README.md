@@ -30,8 +30,12 @@ and moves funds in one step.
 **P11 complete — a paymaster, so users need no ether.** An account that has
 never held ether deploys itself and pays USDC through the real bundler, its gas
 paid by `VerifyingPaymaster` on the strength of a sponsorship the platform's
-ERC-7677 service signed after checking its policy. Next is P12, social
-recovery.
+ERC-7677 service signed after checking its policy.
+
+**P12 in progress — social recovery.** An owner who loses their key can be
+restored by a quorum of guardians they chose, after a 48-hour delay in which the
+owner or the guardians can cancel. The contracts are done; collecting guardian
+approvals and relaying them is the next slice.
 
 ## Requirements
 
@@ -146,6 +150,54 @@ curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json
 The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
+
+## What the P12 slice demonstrates so far
+
+A smart account with one owner is lost with its key: nothing can be upgraded,
+and nobody can step in. **Social recovery** lets the owner name guardians in
+advance -- friends, a second device, the platform -- a quorum of whom can hand
+the account to a new key:
+
+```
+guardians sign (3 of 5) -> initiateRecovery(newOwner) -> 48h -> executeRecovery() -> new owner
+                                                          |
+                                                          +- the owner (key still works) or a
+                                                             guardian quorum may cancel
+```
+
+**The delay is what stops colluding guardians.** If the owner still has the
+key, the recovery was never needed, and they have 48 hours to veto it with a
+signed operation. A test has three guardians try to take the account and the
+owner cancel. Guardians can also withdraw a recovery they started, by the same
+quorum signing over its nonce -- so that cancellation cannot be replayed later
+against a different recovery.
+
+**A module with exactly one power.** Recovery lives in `GuardianModule`, one
+contract serving every account. The account trusts it with `transferOwnership`
+and nothing else: not a general module system that could make the account call
+anything, which would be a second owner. The owner chooses the module, and can
+remove it, only through their own signed operations.
+
+**The vault's signature rules, reused.** Guardians sign EIP-712 approvals
+off-chain, so they need no ether; anyone submits them. Exactly a quorum,
+strictly ascending by signer, bound to the account, the chain and a nonce that
+every recovery, cancellation and change of guardians spends. Changing guardians
+also cancels a recovery in progress, so approvals from removed guardians cannot
+complete it. A matured recovery lapses after seven days.
+
+**What it does not do.** Recovery protects against a lost key, not a stolen one:
+a thief with the key can move the funds at once, without waiting for anyone.
+
+**What testing found.** Removing the nonce increment when a recovery starts
+survived every test: the approvals' one-hour deadline expired before the 48-hour
+delay ended, so expiry masked the gap. With a long deadline, the same approvals
+could start a second recovery after the first completed. A test now holds
+approvals to a single use. And `forge coverage` compiles without the optimiser:
+the account had grown enough that deploying it from initCode ran out of the
+test helper's verification gas, which first looked like a collapse in coverage.
+
+Coverage is 100% for every contract; fifteen mutations to the recovery
+defences each fail a test.
 
 ## What P11 demonstrates
 
