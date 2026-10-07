@@ -167,6 +167,19 @@ const envSchema = z.object({
   PAYMASTER_SPONSORSHIP_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   PAYMASTER_PORT: z.coerce.number().int().positive().default(4338),
 
+  // --- Social recovery. Requests are served by the API; a relayer submits. ---
+
+  GUARDIAN_MODULE_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "GUARDIAN_MODULE_ADDRESS must be a 20-byte hex address")
+    .optional(),
+  /** Pays gas to start, execute and cancel recoveries. Authorises nothing. */
+  RECOVERY_RELAYER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "RECOVERY_RELAYER_PRIVATE_KEY must be a 32-byte hex key")
+    .optional(),
+  RECOVERY_POLL_MS: z.coerce.number().int().positive().default(10_000),
+
   /** How long owners have to sign an automatic top-up. */
   REBALANCE_PROPOSAL_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
 }).superRefine((env, ctx) => {

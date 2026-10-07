@@ -44,6 +44,12 @@ export async function toWalletSmartAccount(params: {
     factory: Address;
     /** Lets one owner hold several accounts. */
     salt?: bigint;
+    /**
+     * An existing account's address. Needed once its owner has changed --
+     * after a recovery, say -- because the factory derives addresses from the
+     * owner the account was created with, not the one it has now.
+     */
+    address?: Address;
 }) {
     const { client, owner, factory } = params;
     const salt = params.salt ?? 0n;
@@ -55,12 +61,14 @@ export async function toWalletSmartAccount(params: {
 
     // The address is fixed by owner and salt before anything is deployed; the
     // factory computes it with the same CREATE2 inputs it deploys with.
-    const address = await client.readContract({
-        address: factory,
-        abi: accountFactoryAbi,
-        functionName: "getAddress",
-        args: [owner.address, salt],
-    });
+    const address =
+        params.address ??
+        (await client.readContract({
+            address: factory,
+            abi: accountFactoryAbi,
+            functionName: "getAddress",
+            args: [owner.address, salt],
+        }));
 
     return toSmartAccount({
         client,
