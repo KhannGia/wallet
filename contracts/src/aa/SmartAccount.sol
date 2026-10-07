@@ -28,6 +28,16 @@ contract SmartAccount is IAccount {
     IEntryPoint public immutable entryPoint;
     address public owner;
 
+    /// @notice The one contract, besides the account itself, allowed to replace
+    ///         the owner -- the guardians' recovery module. Zero means none.
+    /// @dev Deliberately not a general module system. A module that could make
+    ///      the account call anything would be a second owner; this one can do
+    ///      exactly one thing, and only what the owner chose to allow.
+    address public recoveryModule;
+
+    event OwnerChanged(address indexed previousOwner, address indexed newOwner);
+    event RecoveryModuleChanged(address indexed module);
+
     struct Call {
         address target;
         uint256 value;
@@ -35,6 +45,7 @@ contract SmartAccount is IAccount {
     }
 
     error OnlyEntryPoint();
+    error OnlyOwnerOrRecovery();
     error InvalidOwner();
     error CallFailed(uint256 index, bytes returndata);
 
@@ -85,6 +96,27 @@ contract SmartAccount is IAccount {
             (bool paid,) = payable(msg.sender).call{value: missingAccountFunds}("");
             (paid);
         }
+    }
+
+    /// @notice Chooses -- or with zero, removes -- the recovery module. Only the
+    ///         owner can, through a signed operation.
+    function setRecoveryModule(address module) external onlyEntryPointOrSelf {
+        recoveryModule = module;
+        emit RecoveryModuleChanged(module);
+    }
+
+    /// @notice Replaces the owner. The owner may rotate its own key through a
+    ///         signed operation; the recovery module may do it when the key is
+    ///         lost. Nobody else, the EntryPoint included: a signed operation
+    ///         reaches here only as the account calling itself.
+    function transferOwnership(address newOwner) external {
+        // With no module set, recoveryModule is zero, and no caller is zero.
+        if (msg.sender != address(this) && msg.sender != recoveryModule) {
+            revert OnlyOwnerOrRecovery();
+        }
+        if (newOwner == address(0)) revert InvalidOwner();
+        emit OwnerChanged(owner, newOwner);
+        owner = newOwner;
     }
 
     function execute(address target, uint256 value, bytes calldata data)
