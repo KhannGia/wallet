@@ -32,10 +32,11 @@ never held ether deploys itself and pays USDC through the real bundler, its gas
 paid by `VerifyingPaymaster` on the strength of a sponsorship the platform's
 ERC-7677 service signed after checking its policy.
 
-**P12 in progress — social recovery.** An owner who loses their key can be
-restored by a quorum of guardians they chose, after a 48-hour delay in which the
-owner or the guardians can cancel. The contracts are done; collecting guardian
-approvals and relaying them is the next slice.
+**P12 complete — social recovery.** An owner who loses their key is restored by
+a quorum of guardians they chose: guardians approve over the API from their own
+wallets, a relayer starts the recovery, and after a 48-hour delay -- in which
+the owner or the guardians can cancel -- hands the account to the new key, which
+then drives it through the bundler. Next is P13, session keys.
 
 ## Requirements
 
@@ -151,7 +152,7 @@ The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
 
-## What the P12 slice demonstrates so far
+## What P12 demonstrates
 
 A smart account with one owner is lost with its key: nothing can be upgraded,
 and nobody can step in. **Social recovery** lets the owner name guardians in
@@ -198,6 +199,41 @@ test helper's verification gas, which first looked like a collapse in coverage.
 
 Coverage is 100% for every contract; fifteen mutations to the recovery
 defences each fail a test.
+
+### Approvals over the API, and a relayer
+
+```
+POST /api/v1/recovery/requests                   open a request; returns the typed data guardians sign
+POST /api/v1/recovery/requests/:id/approvals     a guardian's approval
+POST /api/v1/recovery/requests/:id/cancellation  open a guardians' cancellation of a started recovery
+POST /api/v1/recovery/requests/:id/cancellations a guardian's vote to cancel
+GET  /api/v1/recovery/requests/:id               status, signers, executable time
+./wallet recovery-relayer                         starts, executes and cancels on chain
+```
+
+**Several requests may collect at once.** Anyone may open a request -- only
+guardian signatures count -- so "one open request per account" would let a
+stranger block a genuine recovery with a bogus one until its deadline passed.
+Whichever request starts first spends the module's nonce; the rest become
+`STALE`, which a test shows with two competing requests.
+
+**The relayer's key only pays gas.** Guardians' signatures authorise every step,
+and the module checks them again on chain. It is still a key, so it runs apart
+from the API and is checked against every other signer.
+
+**The module is the record.** A veto the owner sends from their own wallet, or a
+cancellation guardians submit themselves, never passes through the relayer; it
+reads the module's pending recovery every pass and notices it is gone. A moved
+nonce is checked against the module before a request is called stale, so a
+start whose receipt was lost is recognised -- the same lesson as the vault's.
+
+**After recovery the account keeps its address.** The factory derives addresses
+from the owner an account was created with, so the account adapter takes an
+explicit address for an account whose owner has since changed; a test has the
+new key send a UserOperation through the bundler.
+
+Mutation testing covers the relayer and the request checks as well as the
+contracts.
 
 ## What P11 demonstrates
 
