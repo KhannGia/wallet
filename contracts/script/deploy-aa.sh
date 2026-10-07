@@ -1,6 +1,7 @@
 #!/bin/sh
-# Deploys the account factory and the paymaster onto the local chain, funds the
-# paymaster's deposit and stake, and prints the addresses for .env.
+# Deploys the account factory, the paymaster and the guardian module onto the
+# local chain, funds the paymaster's deposit and stake, and prints the addresses
+# for .env.
 #
 # Devnet only. The EntryPoint must already be there: ./wallet up starts the
 # bundler, which waits for it.
@@ -30,8 +31,11 @@ FACTORY=$(deploy src/aa/AccountFactory.sol:AccountFactory --constructor-args "$E
 PAYMASTER=$(deploy src/aa/VerifyingPaymaster.sol:VerifyingPaymaster \
     --constructor-args "$ENTRYPOINT" "$SIGNER" "$DEPLOYER")
 
+MODULE=$(deploy src/aa/GuardianModule.sol:GuardianModule)
+
 cast send "$PAYMASTER" "deposit()" --value 10ether --private-key "$DEPLOYER_KEY" >/dev/null
 cast send "$PAYMASTER" "addStake(uint32)" 86400 --value 1ether --private-key "$DEPLOYER_KEY" >/dev/null
 
 echo "ACCOUNT_FACTORY_ADDRESS=$FACTORY"
 echo "PAYMASTER_ADDRESS=$PAYMASTER"
+echo "GUARDIAN_MODULE_ADDRESS=$MODULE"

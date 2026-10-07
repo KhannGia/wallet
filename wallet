@@ -128,6 +128,8 @@ Vault
 Smart accounts
   deploy-aa       Deploy the account factory and the paymaster (local only)
   paymaster       Serve gas sponsorships over ERC-7677 (holds the signer key)
+  recovery-relayer
+                  Start, execute and cancel guardian recoveries
 
 Database
   migrate         Apply pending migrations
@@ -193,6 +195,10 @@ case "${1:-help}" in
         need_services
         "${DC[@]}" run --rm -p "${PAYMASTER_PORT:-4338}:${PAYMASTER_PORT:-4338}" node-tools \
             "npm run paymaster --workspace @wallet/api"
+        ;;
+    recovery-relayer)
+        need_services
+        "${DC[@]}" run --rm node-tools "npm run recovery-relayer --workspace @wallet/api"
         ;;
     vault-submitter)
         need_services
