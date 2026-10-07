@@ -37,7 +37,10 @@ abstract contract SmartAccountBase is Test {
     }
 
     /// @dev Generous fixed gas limits: these tests are about who may do what,
-    ///      not about gas estimation, which is the bundler's job.
+    ///      not about gas estimation, which is the bundler's job. Verification
+    ///      covers deploying the account from initCode, and has to fit the
+    ///      unoptimised bytecode `forge coverage` compiles, not just the
+    ///      optimised build.
     function _op(address sender, bytes memory initCode, bytes memory callData)
         internal
         view
@@ -47,7 +50,7 @@ abstract contract SmartAccountBase is Test {
         op.nonce = entryPoint.getNonce(sender, 0);
         op.initCode = initCode;
         op.callData = callData;
-        op.accountGasLimits = bytes32((uint256(1_000_000) << 128) | uint256(500_000));
+        op.accountGasLimits = bytes32((uint256(3_000_000) << 128) | uint256(500_000));
         op.preVerificationGas = 50_000;
         op.gasFees = bytes32((uint256(1 gwei) << 128) | uint256(2 gwei));
     }
