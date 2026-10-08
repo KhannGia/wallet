@@ -36,7 +36,12 @@ ERC-7677 service signed after checking its policy.
 a quorum of guardians they chose: guardians approve over the API from their own
 wallets, a relayer starts the recovery, and after a 48-hour delay -- in which
 the owner or the guardians can cancel -- hands the account to the new key, which
-then drives it through the bundler. Next is P13, session keys.
+then drives it through the bundler.
+
+**P13 in progress — session keys.** The owner can hand an app or a bot a second
+key bounded in time, in what it may call down to the arguments, and in how much
+it may move. The contract is done; checking it against a bundler that enforces
+ERC-7562, and a service that holds session keys, are the next slices.
 
 ## Requirements
 
@@ -151,6 +156,58 @@ curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json
 The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
+
+## What the P13 slice demonstrates so far
+
+A session key is a second key the owner signs into the account through an
+ordinary operation:
+
+| Bound | Example |
+| ----- | ------- |
+| Time | valid for the next 24 hours |
+| Scope | only `transfer` on USDC, recipient must be X, amount at most 50 |
+| Total | at most 100 USDC, and no ether, across the whole session |
+
+Leaking one costs at most what its limits allow. The owner keeps full power and
+can revoke a session at any time.
+
+**Scope is checked in validation, the total in execution.** Permissions are a
+list of `(target, selector, conditions)`, a condition being "argument *n* is
+equal to / at most / at least a value", so an operation outside them is refused
+before it costs anything. The running total is counted when the call runs: an
+operation past the cap reverts there, though the gas for trying is spent.
+
+**Counting in execution needs the whole operation.** The EntryPoint validates
+every operation in a bundle before executing any, so remembering "a session is
+acting" in storage during validation would be overwritten by the next
+operation's validation before this one runs -- a hostile bundler could arrange
+exactly that. Sessions act only through `executeUserOp` (EntryPoint v0.8's
+`IAccountExecute`), which hands execution the full operation, so the signer is
+recovered again from the signature. Tests put two session operations in one
+bundle, and an owner's revocation ahead of a session operation the bundler
+already validated; both are stopped.
+
+**The clock and the storage follow ERC-7562.** Validation may not read
+`block.timestamp`, so the session's window goes back to the EntryPoint in
+`validationData` -- which treats the `validAfter` second itself as not yet due.
+Session data lives in the account's own storage: a separate module's nested
+`mapping(account => mapping(key => ...))` would not count as storage associated
+with the sender, and real bundlers would refuse the operation.
+
+**What a session can never reach.** The account itself (new sessions, owner,
+recovery module), the EntryPoint (its deposit and nonces), and the recovery
+module -- even if the owner grants a permission on one by mistake. A capped
+token moves only through `transfer` and `approve`, both counted; an unlimited
+approve would otherwise hand the balance to the spender outside the cap.
+
+**What testing found.** A transfer cut short of its amount would have its amount
+read from beyond the call data -- typically zero, so uncounted. A standard token
+reverts on that call, which hid the gap; a test with a token that tolerates it
+showed the transfer going through, and a capped token's calls must now carry
+their full arguments. Two more mutations survived until tests granted
+permissions on the forbidden targets on purpose. Of twenty-one mutations,
+twenty fail a test; the twenty-first is equivalent, since a revoked session has
+no permissions left to match. Coverage is 100% for every contract.
 
 ## What P12 demonstrates
 
