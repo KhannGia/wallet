@@ -50,7 +50,7 @@ abstract contract SmartAccountBase is Test {
         op.nonce = entryPoint.getNonce(sender, 0);
         op.initCode = initCode;
         op.callData = callData;
-        op.accountGasLimits = bytes32((uint256(3_000_000) << 128) | uint256(500_000));
+        op.accountGasLimits = bytes32((uint256(8_000_000) << 128) | uint256(500_000));
         op.preVerificationGas = 50_000;
         op.gasFees = bytes32((uint256(1 gwei) << 128) | uint256(2 gwei));
     }
