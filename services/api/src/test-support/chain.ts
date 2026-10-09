@@ -25,8 +25,10 @@ interface Artifact {
  * read-only into the Node containers, so the backend consumes exactly the
  * bytecode Foundry produced rather than a copy that can drift.
  */
-export async function loadArtifact(name: string): Promise<Artifact> {
-    const path = `${ARTIFACT_DIR}${name}.sol/${name}.json`;
+export async function loadArtifact(name: string, file = name): Promise<Artifact> {
+    // `file` is the source file the contract was compiled from, when it is not
+    // named after the contract -- several test contracts in one file, say.
+    const path = `${ARTIFACT_DIR}${file}.sol/${name}.json`;
     try {
         return JSON.parse(await readFile(path, "utf8")) as Artifact;
     } catch (error) {
