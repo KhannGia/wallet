@@ -48,7 +48,7 @@ jobs:
       # still worth having.
       fail-fast: false
       matrix:
-        group: [core, chain, vault, aa]
+        group: [core, chain, vault, aa, erc7562]
     steps:
       - uses: actions/checkout@v5
 

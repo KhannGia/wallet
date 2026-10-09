@@ -49,6 +49,7 @@ FORGE_DEPS="set -e
 CHAIN_TESTS='^services/api/src/chain/'
 VAULT_TESTS='^services/api/src/vault/|^services/api/src/routes/vault\.test\.ts$'
 AA_TESTS='^services/api/src/aa/'
+ERC7562_TESTS='^services/api/src/aa/erc7562\.test\.ts$'
 backend_tests() {
     local all
     all=$(find packages/*/src services/*/src -name '*.test.ts' | sort)
@@ -56,10 +57,11 @@ backend_tests() {
         "")    echo "$all" ;;
         chain) grep -E "$CHAIN_TESTS" <<<"$all" ;;
         vault) grep -E "$VAULT_TESTS" <<<"$all" ;;
-        aa)    grep -E "$AA_TESTS" <<<"$all" ;;
+        aa)    grep -E "$AA_TESTS" <<<"$all" | grep -vE "$ERC7562_TESTS" ;;
+        erc7562) grep -E "$ERC7562_TESTS" <<<"$all" ;;
         core)  grep -vE "$CHAIN_TESTS|$VAULT_TESTS|$AA_TESTS" <<<"$all" ;;
         *)
-            echo "Unknown test group: $1 (expected core, chain, vault or aa)" >&2
+            echo "Unknown test group: $1 (expected core, chain, vault, aa or erc7562)" >&2
             return 1
             ;;
     esac
@@ -78,6 +80,12 @@ run_backend_tests() {
     # contracts, while a bundler container left running would not notice.
     case "${1:-}" in
         ""|aa) "${DC[@]}" up -d --wait --force-recreate entrypoint-setup bundler ;;
+    esac
+    # The geth chain and safe-mode bundler, for the ERC-7562 checks only.
+    case "${1:-}" in
+        ""|erc7562)
+            "${DC[@]}" --profile erc7562 up -d --wait --force-recreate geth geth-setup bundler-safe
+            ;;
     esac
     node_tools "node --test --test-concurrency=1 $(tr '\n' ' ' <<<"$files")"
 }
@@ -106,7 +114,7 @@ Checks
   test            Run every test suite
   test-node [group]
                   Run backend tests (starts Postgres and anvil first);
-                  group is core, chain, vault or aa, default all
+                  group is core, chain, vault, aa or erc7562, default all
   test-forge      Run Solidity tests
   coverage        Solidity coverage for contracts under src/
   typecheck       Type-check the whole workspace
