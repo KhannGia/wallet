@@ -16,6 +16,8 @@ x-node-common: &node-common
     DATABASE_URL: postgres://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet}
     RPC_URL: http://anvil:8545
     BUNDLER_URL: http://bundler:4337
+    SAFE_RPC_URL: http://geth:8545
+    SAFE_BUNDLER_URL: http://bundler-safe:3000/rpc
     CHAIN_ID: "31337"
     NODE_ENV: development
     LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -155,6 +157,90 @@ services:
       retries: 40
     depends_on:
       entrypoint-setup:
+        condition: service_completed_successfully
+
+  # --- A second chain, for checking ERC-7562 -------------------------------------
+  #
+  # Bundlers enforce ERC-7562 -- what an account or paymaster may read and do
+  # while validating -- by tracing each operation, and anvil lacks the tracer
+  # that needs. geth has it, so this profile runs a geth dev chain with a bundler
+  # in safe mode: an operation breaking the rules is refused here exactly as a
+  # production bundler would refuse it.
+  geth:
+    image: ethereum/client-go@sha256:8fc513472bef623d0685169b0728c8ad1f499d0a5834ebc7ede1207cdc83e79e
+    profiles: ["erc7562"]
+    command:
+      - "--dev"
+      - "--dev.period=1"
+      # Above the bundler's default bundle size; dev mode's default is lower.
+      - "--dev.gaslimit=30000000"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.vhosts=*"
+      - "--http.api=eth,net,web3,debug,txpool"
+    ports:
+      - "${GETH_PORT:-8546}:8545"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          wget -qO- --header='Content-Type: application/json'
+          --post-data='{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+          http://127.0.0.1:8545 | grep -q result
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  geth-setup:
+    image: wallet-foundry:local
+    build:
+      context: .
+      dockerfile: docker/foundry.Dockerfile
+    profiles: ["erc7562"]
+    working_dir: /app/contracts
+    environment:
+      ETH_RPC_URL: http://geth:8545
+    volumes:
+      - ./:/app
+      - forge_lib:/app/contracts/lib
+    entrypoint: ["sh", "script/setup-geth.sh"]
+    restart: "no"
+    depends_on:
+      geth:
+        condition: service_healthy
+
+  # The reference bundler, from the authors of ERC-4337 and ERC-7562, in safe
+  # mode. Not Alto: Alto's safe mode misreads its own simulation result for
+  # EntryPoint v0.8 -- its tracer drops the outermost frame, so it decodes the
+  # EntryPoint's DelegateAndRevert instead of the ValidationResult -- and
+  # refuses every operation, compliant or not.
+  bundler-safe:
+    image: accountabstraction/bundler@sha256:d4958f112ac6bcf4b404be7ec1416b95d21b8feacd3d9d8f34b9ad5d4d1a93fe
+    profiles: ["erc7562"]
+    environment:
+      CHAIN_ID: "1337"
+      RPC_URL: http://geth:8545
+    volumes:
+      - ./docker/reference-bundler/start.sh:/start.sh:ro
+    entrypoint: ["sh", "/start.sh"]
+    ports:
+      - "${SAFE_BUNDLER_PORT:-4339}:3000"
+    healthcheck:
+      # No curl or wget in the image, and node 16 has no fetch.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - >-
+          require('http').request({host:'127.0.0.1',port:3000,path:'/rpc',method:'POST',
+          headers:{'content-type':'application/json'}},r=>process.exit(r.statusCode===200?0:1))
+          .on('error',()=>process.exit(1))
+          .end(JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_chainId',params:[]}))
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    depends_on:
+      geth-setup:
         condition: service_completed_successfully
 
   api:
