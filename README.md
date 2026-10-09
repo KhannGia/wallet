@@ -40,8 +40,9 @@ then drives it through the bundler.
 
 **P13 in progress — session keys.** The owner can hand an app or a bot a second
 key bounded in time, in what it may call down to the arguments, and in how much
-it may move. The contract is done; checking it against a bundler that enforces
-ERC-7562, and a service that holds session keys, are the next slices.
+it may move. The account's operations -- the owner's and a session key's -- pass
+a bundler that enforces ERC-7562. A service that holds session keys is the last
+slice.
 
 ## Requirements
 
@@ -208,6 +209,41 @@ their full arguments. Two more mutations survived until tests granted
 permissions on the forbidden targets on purpose. Of twenty-one mutations,
 twenty fail a test; the twenty-first is equivalent, since a revoked session has
 no permissions left to match. Coverage is 100% for every contract.
+
+### ERC-7562, enforced
+
+```
+./wallet test-node erc7562   # geth dev chain + the reference bundler in safe mode
+```
+
+A bundler simulates `validateUserOp` before accepting an operation. If
+validation read the clock, or another contract's storage, the operation could
+pass simulation and fail on chain -- and one transaction could invalidate
+thousands of operations in the mempool at once. ERC-7562 forbids both, and real
+bundlers enforce it by tracing every operation.
+
+anvil cannot trace the way that needs, so the `erc7562` profile runs a **geth
+dev chain** -- which ships the CREATE2 deployer and the tracer -- with the
+canonical EntryPoint and the **reference bundler** from the authors of ERC-4337
+and ERC-7562, in safe mode. Tests go both ways:
+
+| Operation | Verdict |
+| --------- | ------- |
+| Owner's first operation, deploying the account through the factory | accepted |
+| Owner granting a session, then the session key transferring within its rules | accepted |
+| An account that reads `block.timestamp` while validating | refused, `OP-011` banned opcode |
+| An account that reads another contract's storage (someone's token balance) | refused, `STO-010` unstaked access |
+
+The refusals are what make the acceptances mean something: a "safe mode" that
+let those through would not be checking anything.
+
+**Why not Alto.** It was tried first. Its safe mode routes the simulation
+through a helper contract and the EntryPoint's `delegateAndRevert`, and its
+tracer does not record the outermost call frame -- so it decodes the
+EntryPoint's `DelegateAndRevert(true, result)` instead of the result inside, and
+refuses every v0.8 operation, compliant or not. The trace showed the account's
+validation had in fact succeeded. Alto still serves the main stack, where safe
+mode is off.
 
 ## What P12 demonstrates
 
@@ -430,10 +466,10 @@ salt was checked locally -- with that artifact it yields exactly
 `0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108` -- and the script verifies the code
 is there afterwards rather than trusting the transaction.
 
-**Safe mode is off locally, and that is a known gap.** Alto enforces ERC-7562 --
-what `validateUserOp` may read and write -- by tracing every operation, and
-anvil lacks the tracer it needs. Those rules go unchecked here; P13's session
-keys are where they start to matter, and tests will have to cover them.
+**Safe mode is off on anvil.** Alto enforces ERC-7562 -- what `validateUserOp`
+may read and write -- by tracing every operation, and anvil lacks the tracer it
+needs. P13 closes the gap with a second chain where the rules are enforced; see
+below.
 
 **Nonces run in one sequence.** An ERC-4337 nonce is a 192-bit key plus a
 64-bit sequence. viem draws a fresh time-based key for every operation by
