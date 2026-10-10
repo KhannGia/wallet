@@ -14,7 +14,8 @@
     "sweeper": "node src/chain/sweeper-cli.ts",
     "vault-submitter": "node src/vault/submitter-cli.ts",
     "paymaster": "node src/aa/paymaster/paymaster-cli.ts",
-    "recovery-relayer": "node src/aa/recovery/relayer-cli.ts"
+    "recovery-relayer": "node src/aa/recovery/relayer-cli.ts",
+    "session-manager": "node src/aa/sessions/session-manager-cli.ts"
   },
   "dependencies": {
     "@wallet/shared": "*",
