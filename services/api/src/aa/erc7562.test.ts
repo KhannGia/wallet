@@ -6,9 +6,7 @@ import {
     createPublicClient,
     createWalletClient,
     defineChain,
-    encodeAbiParameters,
     encodeFunctionData,
-    encodePacked,
     erc20Abi,
     http,
     parseAbi,
@@ -18,10 +16,10 @@ import {
     type WalletClient,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { createBundlerClient, entryPoint08Abi, entryPoint08Address, type BundlerClient } from "viem/account-abstraction";
+import { createBundlerClient, entryPoint08Address, type BundlerClient } from "viem/account-abstraction";
 
 import { loadArtifact } from "../test-support/chain.ts";
-import { toWalletSmartAccount } from "./smart-account.ts";
+import { toSessionAccount, toWalletSmartAccount } from "./smart-account.ts";
 
 /**
  * ERC-7562 against a bundler that enforces it: the reference bundler, from the
@@ -182,22 +180,13 @@ describe("ERC-7562, enforced by a bundler in safe mode", () => {
         assert.equal(granted.success, true, `granting the session reverted: ${granted.reason ?? "no reason"}`);
 
         // The app holds only the session key. Its operations go through
-        // executeUserOp, on the session's own nonce sequence.
-        const asSession = await toWalletSmartAccount({ client, owner: session, factory, address: account.address });
+        // executeUserOp, on the session's own nonce sequence, signed with the
+        // session's address in front.
+        const asSession = await toSessionAccount({ client, sessionKey: session, account: account.address, factory });
         const recipient = fresh().address;
         const transfer = encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [recipient, 250n] });
-        const callData = encodePacked(
-            ["bytes4", "bytes"],
-            ["0x8dd7712f", encodeAbiParameters([{ type: "address" }, { type: "uint256" }, { type: "bytes" }], [token, 0n, transfer])],
-        );
-        const nonce = await client.readContract({
-            address: entryPoint08Address,
-            abi: entryPoint08Abi,
-            functionName: "getNonce",
-            args: [account.address, BigInt(session.address)],
-        });
 
-        const hash = await bundler.sendUserOperation({ ...GAS, account: asSession, callData, nonce });
+        const hash = await bundler.sendUserOperation({ ...GAS, account: asSession, calls: [{ to: token, data: transfer }] });
         const spent = await bundler.waitForUserOperationReceipt({ hash });
 
         assert.equal(spent.success, true, `the session's transfer reverted: ${spent.reason ?? "no reason"}`);
