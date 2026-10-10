@@ -38,11 +38,11 @@ wallets, a relayer starts the recovery, and after a 48-hour delay -- in which
 the owner or the guardians can cancel -- hands the account to the new key, which
 then drives it through the bundler.
 
-**P13 in progress — session keys.** The owner can hand an app or a bot a second
+**P13 complete — session keys.** The owner can hand an app or a bot a second
 key bounded in time, in what it may call down to the arguments, and in how much
-it may move. The account's operations -- the owner's and a session key's -- pass
-a bundler that enforces ERC-7562. A service that holds session keys is the last
-slice.
+it may move. The account's operations pass a bundler that enforces ERC-7562,
+and a session manager holds keys for apps -- sealed at rest, shredded when a
+session ends -- spending with them on request, gas sponsored by the paymaster.
 
 ## Requirements
 
@@ -158,7 +158,7 @@ The balance drops immediately and appears as `reservedBalance` until the chain
 settles it. The hot wallet needs both the token and some native currency for
 gas.
 
-## What the P13 slice demonstrates so far
+## What P13 demonstrates
 
 A session key is a second key the owner signs into the account through an
 ordinary operation:
@@ -183,10 +183,21 @@ every operation in a bundle before executing any, so remembering "a session is
 acting" in storage during validation would be overwritten by the next
 operation's validation before this one runs -- a hostile bundler could arrange
 exactly that. Sessions act only through `executeUserOp` (EntryPoint v0.8's
-`IAccountExecute`), which hands execution the full operation, so the signer is
-recovered again from the signature. Tests put two session operations in one
-bundle, and an owner's revocation ahead of a session operation the bundler
-already validated; both are stopped.
+`IAccountExecute`), which hands execution the full operation -- signature
+included. Tests put two session operations in one bundle, and an owner's
+revocation ahead of a session operation the bundler already validated; both are
+stopped.
+
+**The signature names the session.** A session's signature is its address, then
+its ECDSA signature: `[address, 20 bytes][signature, 65 bytes]`; the owner's is
+the bare 65 bytes. The first design recovered the session from the signature in
+execution, and the end-to-end test through a real bundler broke it: to estimate
+gas, a bundler simulates with a placeholder signature, which recovers to nobody
+-- so execution found no session, reverted, and no session operation could ever
+be estimated. Foundry and the ERC-7562 tests both used fixed gas and never
+noticed. Stated in the signature, the session is charged correctly whatever the
+signature; validation has already proved the signature is that session's
+before anything executes.
 
 **The clock and the storage follow ERC-7562.** Validation may not read
 `block.timestamp`, so the session's window goes back to the EntryPoint in
@@ -209,6 +220,38 @@ their full arguments. Two more mutations survived until tests granted
 permissions on the forbidden targets on purpose. Of twenty-one mutations,
 twenty fail a test; the twenty-first is equivalent, since a revoked session has
 no permissions left to match. Coverage is 100% for every contract.
+
+### The session manager
+
+```
+./wallet session-manager
+POST   /sessions                  create a key for an account; returns the addSession call for the owner
+POST   /sessions/:id/operations   spend with it: { to, value, data, sponsored }
+GET    /sessions/:id
+DELETE /sessions/:id              shred the key; returns the revokeSession call for the owner
+```
+
+An app or a bot that should act on an account without its owner's key gets a
+session the owner grants. The session manager holds the key so the app never
+does: the app holds a bearer token, and asks.
+
+| Concern | Answer |
+| ------- | ------ |
+| Where the key lives | its own process, apart from the API |
+| At rest | AES-256-GCM under a master key only in its environment; a random IV per key; the account and session address as authenticated data, so a ciphertext swapped onto another row does not open |
+| Who may ask | only callers presenting the bearer token, compared in constant time; whoever holds it can spend within every session's limits |
+| Database leaked | ciphertext only |
+| Database and master key leaked | the keys -- still bounded by every session's scope, cap and expiry on chain, which is the point of a session |
+| Revoking | the ciphertext is deleted at once -- not even the service can sign again -- and the `revokeSession` call is returned for the owner, since only that stops everyone |
+| Expiry | keys of expired sessions are shredded on a timer |
+| Wasted gas | the cap is enforced in execution, so a call past it would revert at a cost; the service reads what is left on chain and refuses first |
+
+Granting is the owner's act, from their own wallet: the service only returns the
+`addSession` call. It notices on its own when the owner revokes on chain, and
+shreds its copy. The paymaster's policy now also covers `executeUserOp`, with
+the same rules, so a session operation can be sponsored: tests drive an app
+spending through the service, gas paid by the paymaster, the account's ether
+untouched.
 
 ### ERC-7562, enforced
 
