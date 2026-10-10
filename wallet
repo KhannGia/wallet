@@ -138,6 +138,7 @@ Smart accounts
   paymaster       Serve gas sponsorships over ERC-7677 (holds the signer key)
   recovery-relayer
                   Start, execute and cancel guardian recoveries
+  session-manager Hold session keys for apps and spend within their limits
 
 Database
   migrate         Apply pending migrations
@@ -203,6 +204,12 @@ case "${1:-help}" in
         need_services
         "${DC[@]}" run --rm -p "${PAYMASTER_PORT:-4338}:${PAYMASTER_PORT:-4338}" node-tools \
             "npm run paymaster --workspace @wallet/api"
+        ;;
+    session-manager)
+        need_services
+        "${DC[@]}" up -d --wait bundler
+        "${DC[@]}" run --rm -p "${SESSION_MANAGER_PORT:-4340}:${SESSION_MANAGER_PORT:-4340}" node-tools \
+            "npm run session-manager --workspace @wallet/api"
         ;;
     recovery-relayer)
         need_services

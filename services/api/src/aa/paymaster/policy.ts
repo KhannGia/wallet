@@ -1,6 +1,6 @@
-import { decodeFunctionData, erc20Abi, size, type Address, type Hex } from "viem";
+import { decodeAbiParameters, decodeFunctionData, erc20Abi, size, slice, type Address, type Hex } from "viem";
 
-import { smartAccountAbi } from "../smart-account.ts";
+import { EXECUTE_USER_OP_SELECTOR, smartAccountAbi } from "../smart-account.ts";
 
 /** The most calls one sponsored batch may carry. */
 export const MAX_BATCH_CALLS = 10;
@@ -18,6 +18,21 @@ export type CallVerdict = { allowed: true } | { allowed: false; reason: string }
  * expense.
  */
 export function checkCalls(callData: Hex, token: Address): CallVerdict {
+    // A session key's single call, through executeUserOp. The same rules apply:
+    // the paymaster pays the same whoever signed.
+    if (size(callData) >= 4 && slice(callData, 0, 4).toLowerCase() === EXECUTE_USER_OP_SELECTOR) {
+        let target, value, data;
+        try {
+            [target, value, data] = decodeAbiParameters(
+                [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
+                slice(callData, 4),
+            );
+        } catch {
+            return { allowed: false, reason: "malformed executeUserOp call data" };
+        }
+        return checkEach([{ target, value, data }], token);
+    }
+
     let decoded;
     try {
         decoded = decodeFunctionData({ abi: smartAccountAbi, data: callData });
@@ -37,7 +52,13 @@ export function checkCalls(callData: Hex, token: Address): CallVerdict {
     if (calls.length === 0 || calls.length > MAX_BATCH_CALLS) {
         return { allowed: false, reason: `a batch must hold 1 to ${MAX_BATCH_CALLS} calls` };
     }
+    return checkEach(calls, token);
+}
 
+function checkEach(
+    calls: readonly { target: Address; value: bigint; data: Hex }[],
+    token: Address,
+): CallVerdict {
     for (const [index, call] of calls.entries()) {
         if (call.target.toLowerCase() !== token.toLowerCase()) {
             return { allowed: false, reason: `call ${index} targets ${call.target}, not the token` };

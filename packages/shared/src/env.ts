@@ -170,6 +170,21 @@ const envSchema = z.object({
   PAYMASTER_SPONSORSHIP_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   PAYMASTER_PORT: z.coerce.number().int().positive().default(4338),
 
+  // --- Session manager. Holds session keys, so it runs apart, behind a token. ---
+
+  /** Seals session keys at rest. 32 bytes of hex; never stored anywhere else. */
+  SESSION_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^(0x)?[0-9a-fA-F]{64}$/, "SESSION_ENCRYPTION_KEY must be 32 bytes of hex")
+    .optional(),
+  /** Which master key sealed new keys; bump when rotating it. */
+  SESSION_KEY_VERSION: z.coerce.number().int().positive().default(1),
+  /** Bearer token callers present. Whoever holds it can spend within sessions. */
+  SESSION_MANAGER_TOKEN: z.string().min(32, "SESSION_MANAGER_TOKEN must be at least 32 characters").optional(),
+  SESSION_MANAGER_PORT: z.coerce.number().int().positive().default(4340),
+  /** The ERC-7677 paymaster service, for sponsored session operations. Optional. */
+  PAYMASTER_URL: z.string().min(1).optional(),
+
   // --- Social recovery. Requests are served by the API; a relayer submits. ---
 
   GUARDIAN_MODULE_ADDRESS: z

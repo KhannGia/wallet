@@ -1,7 +1,10 @@
 import {
+    concat,
+    encodeAbiParameters,
     encodeFunctionData,
     parseAbi,
     type Address,
+    type Hex,
     type LocalAccount,
     type PublicClient,
 } from "viem";
@@ -22,7 +25,33 @@ export const smartAccountAbi = parseAbi([
     "struct Call { address target; uint256 value; bytes data; }",
     "function executeBatch(Call[] calls)",
     "function owner() view returns (address)",
+    "struct Condition { uint8 param; uint8 operator; bytes32 value; }",
+    "struct Permission { address target; bytes4 selector; Condition[] conditions; }",
+    "struct SpendLimit { address token; uint256 limit; }",
+    "function addSession(address key, uint48 validAfter, uint48 validUntil, uint256 nativeLimit, Permission[] permissions, SpendLimit[] limits)",
+    "function revokeSession(address key)",
+    "function sessions(address key) view returns (bool active, uint48 validAfter, uint48 validUntil, uint256 nativeLimit, uint256 nativeSpent)",
+    "function tokenAllowances(address key, address token) view returns (bool capped, uint256 limit, uint256 spent)",
 ]);
+
+/**
+ * executeUserOp(PackedUserOperation,bytes32): a session's only way in. The
+ * EntryPoint hands the account the whole operation when call data starts with
+ * this selector, which is what lets the account count a session's spending
+ * against the key that signed.
+ */
+export const EXECUTE_USER_OP_SELECTOR = "0x8dd7712f";
+
+/** Call data for one call made by a session key. */
+export function encodeSessionCall(call: { to: Address; value?: bigint; data?: Hex }): Hex {
+    return concat([
+        EXECUTE_USER_OP_SELECTOR,
+        encodeAbiParameters(
+            [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
+            [call.to, call.value ?? 0n, call.data ?? "0x"],
+        ),
+    ]);
+}
 
 export const accountFactoryAbi = parseAbi([
     "function createAccount(address owner, uint256 salt) returns (address)",
@@ -160,4 +189,52 @@ export async function toWalletSmartAccount(params: {
             throw new Error("SmartAccount does not support typed-data signing yet");
         },
     });
+}
+
+/**
+ * The same account, driven by a session key instead of its owner: calls go
+ * through executeUserOp, one at a time, on the session's own nonce sequence --
+ * key = the session's address -- so an app's operations never hold up the
+ * owner's, nor the owner's an app's.
+ *
+ * Signatures name the session first: [address, 20 bytes][ECDSA, 65 bytes]. The
+ * placeholder used for gas estimation does too, so the bundler's simulation
+ * charges the right session in execution even though the placeholder itself
+ * recovers to nobody.
+ */
+export async function toSessionAccount(params: {
+    client: PublicClient;
+    sessionKey: LocalAccount;
+    account: Address;
+    factory: Address;
+}) {
+    const base = await toWalletSmartAccount({
+        client: params.client,
+        owner: params.sessionKey,
+        factory: params.factory,
+        address: params.account,
+    });
+    const nonceKey = BigInt(params.sessionKey.address);
+
+    return {
+        ...base,
+        async encodeCalls(calls: readonly { to: Address; value?: bigint; data?: Hex }[]) {
+            if (calls.length !== 1) throw new Error("a session key makes one call per operation");
+            return encodeSessionCall(calls[0]!);
+        },
+        async getNonce() {
+            return params.client.readContract({
+                address: entryPoint08Address,
+                abi: entryPoint08Abi,
+                functionName: "getNonce",
+                args: [params.account, nonceKey],
+            });
+        },
+        async getStubSignature() {
+            return concat([params.sessionKey.address, await base.getStubSignature()]);
+        },
+        async signUserOperation(parameters: Parameters<typeof base.signUserOperation>[0]) {
+            return concat([params.sessionKey.address, await base.signUserOperation(parameters)]);
+        },
+    };
 }
