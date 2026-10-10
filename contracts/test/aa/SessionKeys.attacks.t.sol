@@ -150,7 +150,7 @@ contract SessionKeysAttackTest is SessionKeysBase {
         // The next nonce in the session's sequence, signed before the first runs.
         PackedUserOperation memory second = _op(address(account), "", _transfer(THIEF, 60_000_000));
         second.nonce = first.nonce + 1;
-        second = _signWith(sessionPrivateKey, second);
+        second = _signAsSession(sessionPrivateKey, second);
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](2);
         (ops[0], ops[1]) = (first, second);
@@ -277,7 +277,32 @@ contract SessionKeysAttackTest is SessionKeysBase {
         vm.deal(factory.getAddress(owner, 1), 1 ether);
         SmartAccount other = _deployAndCall(1, RECIPIENT, 0, "");
         PackedUserOperation memory op = _op(address(other), "", _transfer(THIEF, 1));
-        op = _signWith(sessionPrivateKey, op);
+        _refused(_signAsSession(sessionPrivateKey, op));
+
+        // Nor as if it were the other account's owner.
+        _refused(_signWith(sessionPrivateKey, _op(address(other), "", _transfer(THIEF, 1))));
+    }
+
+    /// A session's signature without the address in front reads as the
+    /// owner's, and the session key is not the owner.
+    function test_Attack_SessionSignatureWithoutItsAddress() public {
+        PackedUserOperation memory op = _op(address(account), "", _transfer(THIEF, 1));
+        op.nonce = entryPoint.getNonce(address(account), uint192(uint160(sessionKey)));
+        _refused(_signWith(sessionPrivateKey, op));
+    }
+
+    function test_Attack_SignatureOfAnyOtherLength() public {
+        PackedUserOperation memory op = _bySession(_transfer(THIEF, 1));
+        bytes memory longer = bytes.concat(op.signature, hex"00");
+        op.signature = longer;
+        _refused(op);
+
+        op = _bySession(_transfer(THIEF, 1));
+        bytes memory shorter = new bytes(84);
+        for (uint256 i; i < 84; ++i) {
+            shorter[i] = op.signature[i];
+        }
+        op.signature = shorter;
         _refused(op);
     }
 

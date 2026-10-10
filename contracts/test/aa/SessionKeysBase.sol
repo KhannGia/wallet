@@ -100,7 +100,8 @@ abstract contract SessionKeysBase is SmartAccountBase {
     }
 
     /// @dev Sessions use their own nonce key, so an app's operations never hold
-    ///      up the owner's.
+    ///      up the owner's. The signature names the session it claims to be --
+    ///      `sessionKey` -- then carries the signature of whichever key signs.
     function _sessionOp(bytes memory callData, uint256 key)
         internal
         view
@@ -108,7 +109,17 @@ abstract contract SessionKeysBase is SmartAccountBase {
     {
         op = _op(address(account), "", callData);
         op.nonce = entryPoint.getNonce(address(account), uint192(uint160(sessionKey)));
-        return _signWith(key, op);
+        return _signAsSession(key, op);
+    }
+
+    function _signAsSession(uint256 key, PackedUserOperation memory op)
+        internal
+        view
+        returns (PackedUserOperation memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, entryPoint.getUserOpHash(op));
+        op.signature = abi.encodePacked(sessionKey, r, s, v);
+        return op;
     }
 
     function _bySession(bytes memory callData) internal view returns (PackedUserOperation memory) {

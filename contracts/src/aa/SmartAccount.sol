@@ -164,24 +164,50 @@ contract SmartAccount is IAccount, IAccountExecute {
         }
     }
 
-    /// @dev The verdict for a signature: the owner may do anything; a live
-    ///      session key only what its permissions allow, and only inside its
-    ///      validity window, which goes back to the EntryPoint to enforce.
-    ///      ERC-7562 bars validation from reading the clock, so the window is
-    ///      never compared here.
+    /// @dev Signature layouts:
+    ///
+    ///        65 bytes  the owner's ECDSA signature
+    ///        85 bytes  a session key's address, then its ECDSA signature
+    ///
+    ///      The session's address travels in the signature rather than being
+    ///      recovered from it, so execution knows which session to charge
+    ///      without recovering again. That matters for gas estimation: a bundler
+    ///      simulates the operation with a placeholder signature, which recovers
+    ///      to nobody -- and a session recovered in execution would then be no
+    ///      session at all, and the simulation would revert. With the address
+    ///      stated, execution charges the right session whatever the signature;
+    ///      and nothing reaches execution unless validation found the signature
+    ///      really is that session's.
+    ///
+    ///      The verdict: the owner may do anything; a live session key only what
+    ///      its permissions allow, inside its validity window, which goes back
+    ///      to the EntryPoint to enforce. ERC-7562 bars validation from reading
+    ///      the clock, so the window is never compared here.
     function _validateSigner(PackedUserOperation calldata userOp, bytes32 userOpHash)
         private
         view
         returns (uint256)
     {
-        // tryRecover, not recover: a malformed or malleable signature must come
-        // back as a failure verdict rather than a revert.
-        (address signer, ECDSA.RecoverError recoverError,) =
-            ECDSA.tryRecover(userOpHash, userOp.signature);
-        if (recoverError != ECDSA.RecoverError.NoError) return SIG_VALIDATION_FAILED;
-        if (signer == owner) return SIG_VALIDATION_SUCCESS;
+        bytes calldata signature = userOp.signature;
+        if (signature.length == 65) {
+            // tryRecover, not recover: a malformed or malleable signature must
+            // come back as a failure verdict rather than a revert.
+            (address signer, ECDSA.RecoverError recoverError,) =
+                ECDSA.tryRecover(userOpHash, signature);
+            return recoverError == ECDSA.RecoverError.NoError && signer == owner
+                ? SIG_VALIDATION_SUCCESS
+                : SIG_VALIDATION_FAILED;
+        }
+        if (signature.length != 85) return SIG_VALIDATION_FAILED;
 
-        Session storage session = sessions[signer];
+        address key = address(bytes20(signature[:20]));
+        (address recovered, ECDSA.RecoverError keyError,) =
+            ECDSA.tryRecover(userOpHash, signature[20:]);
+        if (keyError != ECDSA.RecoverError.NoError || recovered != key) {
+            return SIG_VALIDATION_FAILED;
+        }
+
+        Session storage session = sessions[key];
         if (!session.active) return SIG_VALIDATION_FAILED;
 
         // A session acts only through executeUserOp, which hands the whole
@@ -198,7 +224,7 @@ contract SmartAccount is IAccount, IAccountExecute {
         if (target == address(this) || target == address(entryPoint) || target == recoveryModule) {
             return SIG_VALIDATION_FAILED;
         }
-        if (!_permitted(signer, target, data)) return SIG_VALIDATION_FAILED;
+        if (!_permitted(key, target, data)) return SIG_VALIDATION_FAILED;
 
         return (uint256(session.validUntil) << 160) | (uint256(session.validAfter) << 208);
     }
@@ -257,18 +283,20 @@ contract SmartAccount is IAccount, IAccountExecute {
     ///         hand. A session's spending is counted here, in execution: an
     ///         operation over its limit reverts, though the gas for trying is
     ///         spent.
-    /// @dev The signer is recovered again rather than remembered from
-    ///      validation. The EntryPoint validates every operation in a bundle
-    ///      before executing any, so a "current session" left in storage could
-    ///      be overwritten by the next operation's validation before this one
-    ///      runs -- and a hostile bundler could arrange exactly that.
-    function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external {
+    /// @dev The session is read from the operation's own signature, not
+    ///      remembered from validation. The EntryPoint validates every operation
+    ///      in a bundle before executing any, so a "current session" left in
+    ///      storage could be overwritten by the next operation's validation
+    ///      before this one runs -- and a hostile bundler could arrange exactly
+    ///      that. A 65-byte signature is the owner's, and is never charged.
+    function executeUserOp(PackedUserOperation calldata userOp, bytes32) external {
         if (msg.sender != address(entryPoint)) revert OnlyEntryPoint();
         (address target, uint256 value, bytes memory data) =
             abi.decode(userOp.callData[4:], (address, uint256, bytes));
 
-        (address signer,,) = ECDSA.tryRecover(userOpHash, userOp.signature);
-        if (signer != owner) _charge(signer, target, value, data);
+        if (userOp.signature.length == 85) {
+            _charge(address(bytes20(userOp.signature[:20])), target, value, data);
+        }
 
         (bool ok, bytes memory returndata) = target.call{value: value}(data);
         if (!ok) revert CallFailed(0, returndata);
