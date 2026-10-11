@@ -291,7 +291,7 @@ describe("rebalancing against a vault", () => {
                  VALUES ('REBALANCE', $1, $2, $3, 1)`,
                 [user.accountId, "0x000000000000000000000000000000000000bEEF", token],
             ),
-            /chain_withdrawals_payout_has_account/,
+            /chain_withdrawals_account_matches_kind/,
         );
         await assert.rejects(
             pool.query(
@@ -299,7 +299,7 @@ describe("rebalancing against a vault", () => {
                  VALUES ('PAYOUT', $1, $2, 1)`,
                 ["0x000000000000000000000000000000000000bEEF", token],
             ),
-            /chain_withdrawals_payout_has_account/,
+            /chain_withdrawals_account_matches_kind/,
         );
     });
 });

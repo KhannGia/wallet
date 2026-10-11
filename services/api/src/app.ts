@@ -6,6 +6,7 @@ import { loadEnv, type Env } from "@wallet/shared";
 import { createChainClient } from "./chain/client.ts";
 import { createPool, type Pool } from "./db/pool.ts";
 import { registerErrorHandler } from "./routes/errors.ts";
+import { registerGraduationRoutes } from "./routes/graduation.ts";
 import { registerLedgerRoutes } from "./routes/ledger.ts";
 import { registerRecoveryRoutes } from "./routes/recovery.ts";
 import { registerVaultRoutes } from "./routes/vault.ts";
@@ -66,6 +67,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     pool: deps.pool,
     client: deps.chain,
     module: deps.env.GUARDIAN_MODULE_ADDRESS,
+  });
+  registerGraduationRoutes(app, {
+    pool: deps.pool,
+    client: deps.chain,
+    factory: deps.env.ACCOUNT_FACTORY_ADDRESS,
+    token: deps.env.USDC_ADDRESS,
   });
 
   return app;
