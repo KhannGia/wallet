@@ -93,7 +93,7 @@ export async function requestWithdrawal(
 
 interface WithdrawalRow {
     id: bigint;
-    kind: "PAYOUT" | "REBALANCE";
+    kind: "PAYOUT" | "REBALANCE" | "GRADUATION";
     account_id: bigint | null;
     amount: bigint;
     status: string;
