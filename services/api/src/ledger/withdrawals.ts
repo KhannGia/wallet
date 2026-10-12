@@ -149,6 +149,16 @@ export async function settleWithdrawal(pool: Pool, withdrawalId: bigint): Promis
                 [withdrawalId, ledgerTxId],
             );
 
+            // In the same transaction as the ledger movement, so a graduation
+            // can never read COMPLETED while its balance is still reserved.
+            if (withdrawal.kind === "GRADUATION") {
+                await client.query(
+                    `UPDATE graduations SET status = 'COMPLETED', settled_at = now()
+                      WHERE withdrawal_id = $1 AND status = 'FUNDING'`,
+                    [withdrawalId],
+                );
+            }
+
             return true;
         },
     );
@@ -207,6 +217,16 @@ export async function refundWithdrawal(
                   WHERE id = $1 AND status NOT IN ('FAILED', 'CONFIRMED')`,
                 [withdrawalId, ledgerTxId, reason],
             );
+
+            // The user is back in custody with their balance, free to try
+            // again: a FAILED graduation no longer counts as the open one.
+            if (withdrawal.kind === "GRADUATION") {
+                await client.query(
+                    `UPDATE graduations SET status = 'FAILED', failure = $2, settled_at = now()
+                      WHERE withdrawal_id = $1 AND status = 'FUNDING'`,
+                    [withdrawalId, reason],
+                );
+            }
 
             return true;
         },
