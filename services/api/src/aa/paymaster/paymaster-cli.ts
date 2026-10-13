@@ -72,6 +72,7 @@ const sponsor = createSponsor(
         chainId: env.CHAIN_ID,
         factory: env.ACCOUNT_FACTORY_ADDRESS as Address,
         token: env.USDC_ADDRESS as Address,
+        guardianModule: env.GUARDIAN_MODULE_ADDRESS as Address | undefined,
         dailyCapWei: env.PAYMASTER_DAILY_GAS_CAP_WEI,
         ttlSeconds: env.PAYMASTER_SPONSORSHIP_TTL_SECONDS,
     },

@@ -35,6 +35,8 @@ export interface SponsorConfig {
     chainId: number;
     factory: Address;
     token: Address;
+    /** The guardian module whose adoption is sponsored. Optional: without it, recovery setup is not. */
+    guardianModule?: Address;
     /** Most wei of gas one account may be promised in a rolling day. */
     dailyCapWei: bigint;
     /** How long a sponsorship stays valid, in seconds of chain time. */
@@ -57,9 +59,9 @@ export async function registerSmartAccount(
  * The sponsorship service's two answers, ERC-7677's pm_getPaymasterStubData
  * and pm_getPaymasterData.
  *
- * Both check the same policy -- a known account, only token transfers, and our
- * own factory -- so a wallet hears "no" before the bundler has spent effort
- * estimating. Only the second signs, and only it counts against the daily cap,
+ * Both check the same policy -- a known account, only token transfers and
+ * recovery setup, and our own factory -- so a wallet hears "no" before the
+ * bundler has spent effort estimating. Only the second signs, and only it counts against the daily cap,
  * because only it produces something that can actually be spent.
  */
 export function createSponsor(
@@ -94,7 +96,11 @@ export function createSponsor(
             throw new SponsorshipRefused(`factory ${op.factory} is not sponsored`);
         }
 
-        const verdict = checkCalls(op.callData as Hex, config.token);
+        const verdict = checkCalls(op.callData as Hex, {
+            token: config.token,
+            account: op.sender as Address,
+            guardianModule: config.guardianModule,
+        });
         if (!verdict.allowed) throw new SponsorshipRefused(verdict.reason);
     }
 
