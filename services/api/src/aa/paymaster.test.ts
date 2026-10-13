@@ -40,7 +40,7 @@ import {
     type SponsorConfig,
 } from "./paymaster/sponsor.ts";
 import { sponsorshipDigest } from "./paymaster/sponsorship.ts";
-import { smartAccountAbi, toWalletSmartAccount } from "./smart-account.ts";
+import { encodeSessionCall, smartAccountAbi, toWalletSmartAccount } from "./smart-account.ts";
 
 const TOKEN = "0x00000000000000000000000000000000000000aa" as Address;
 
@@ -51,16 +51,101 @@ const execute = (target: Address, value: bigint, data: Hex): Hex =>
 
 describe("sponsorship policy", () => {
     const someone = "0x000000000000000000000000000000000000bEEF" as Address;
+    const ACCOUNT = "0x00000000000000000000000000000000000000cc" as Address;
+    const MODULE = "0x00000000000000000000000000000000000000dd" as Address;
+    const tokenOnly = { token: TOKEN, account: ACCOUNT };
+    const withModule = { ...tokenOnly, guardianModule: MODULE };
 
-    it("sponsors token transfers, alone or batched", () => {
-        assert.deepEqual(checkCalls(execute(TOKEN, 0n, transferData(someone, 1n)), TOKEN), { allowed: true });
-
-        const batch = encodeFunctionData({
+    const setupAbi = parseAbi([
+        "function setRecoveryModule(address module)",
+        "function setGuardians(address[] guardians, uint256 threshold)",
+        "function transferOwnership(address newOwner)",
+        "function cancelRecovery()",
+    ]);
+    const adopt = (module: Address) =>
+        encodeFunctionData({ abi: setupAbi, functionName: "setRecoveryModule", args: [module] });
+    const guardians = (count: number, threshold = 1n) =>
+        encodeFunctionData({
+            abi: setupAbi,
+            functionName: "setGuardians",
+            args: [Array.from({ length: count }, (_, i) => pad(numberToHex(i + 1), { size: 20 })), threshold],
+        });
+    const batch = (calls: { target: Address; data: Hex; value?: bigint }[]) =>
+        encodeFunctionData({
             abi: smartAccountAbi,
             functionName: "executeBatch",
-            args: [[1n, 2n].map((amount) => ({ target: TOKEN, value: 0n, data: transferData(someone, amount) }))],
+            args: [calls.map((call) => ({ value: 0n, ...call }))],
         });
-        assert.deepEqual(checkCalls(batch, TOKEN), { allowed: true });
+
+    it("sponsors token transfers, alone or batched", () => {
+        assert.deepEqual(checkCalls(execute(TOKEN, 0n, transferData(someone, 1n)), tokenOnly), { allowed: true });
+
+        const transfers = batch([1n, 2n].map((amount) => ({ target: TOKEN, data: transferData(someone, amount) })));
+        assert.deepEqual(checkCalls(transfers, tokenOnly), { allowed: true });
+    });
+
+    it("sponsors an account adopting the guardian module and naming its guardians", () => {
+        const activation = batch([
+            { target: ACCOUNT, data: adopt(MODULE) },
+            { target: MODULE, data: guardians(3, 2n) },
+        ]);
+        assert.deepEqual(checkCalls(activation, withModule), { allowed: true });
+        assert.deepEqual(checkCalls(execute(ACCOUNT, 0n, adopt(MODULE)), withModule), { allowed: true });
+        assert.deepEqual(checkCalls(execute(MODULE, 0n, guardians(10)), withModule), { allowed: true });
+
+        // Mixed with transfers, in any order.
+        const mixed = batch([
+            { target: TOKEN, data: transferData(someone, 1n) },
+            { target: MODULE, data: guardians(1) },
+        ]);
+        assert.deepEqual(checkCalls(mixed, withModule), { allowed: true });
+    });
+
+    it("refuses recovery setup that is not exactly that", () => {
+        const cases: Record<string, Hex> = {
+            "another module": execute(ACCOUNT, 0n, adopt(someone)),
+            "adopting no module": execute(ACCOUNT, 0n, adopt("0x0000000000000000000000000000000000000000")),
+            // Ownership is the one thing setup must never reach.
+            "transferOwnership on itself": execute(
+                ACCOUNT,
+                0n,
+                encodeFunctionData({ abi: setupAbi, functionName: "transferOwnership", args: [someone] }),
+            ),
+            "setup on another account": execute(someone, 0n, adopt(MODULE)),
+            "trailing bytes on adoption": execute(ACCOUNT, 0n, concat([adopt(MODULE), "0x00"])),
+            "another module call": execute(
+                MODULE,
+                0n,
+                encodeFunctionData({ abi: setupAbi, functionName: "cancelRecovery" }),
+            ),
+            "not a module call": execute(MODULE, 0n, "0xdeadbeef"),
+            "adoption sent to the module": execute(MODULE, 0n, adopt(MODULE)),
+            "too many guardians": execute(MODULE, 0n, guardians(11)),
+            "trailing bytes on guardians": execute(MODULE, 0n, concat([guardians(2), "0x00"])),
+            "ether to the module": execute(MODULE, 1n, guardians(2)),
+            "ether to itself": execute(ACCOUNT, 1n, adopt(MODULE)),
+            "one bad call in a batch": batch([
+                { target: ACCOUNT, data: adopt(MODULE) },
+                { target: ACCOUNT, data: adopt(someone) },
+            ]),
+        };
+        for (const [name, callData] of Object.entries(cases)) {
+            assert.equal(checkCalls(callData, withModule).allowed, false, `${name} must not be sponsored`);
+        }
+
+        // With no module configured, there is no setup to sponsor at all.
+        assert.equal(checkCalls(execute(ACCOUNT, 0n, adopt(MODULE)), tokenOnly).allowed, false);
+        assert.equal(checkCalls(execute(MODULE, 0n, guardians(2)), tokenOnly).allowed, false);
+
+        // Nor through a session key, which only ever moves tokens.
+        assert.equal(
+            checkCalls(encodeSessionCall({ to: MODULE, data: guardians(2) }), withModule).allowed,
+            false,
+        );
+        assert.equal(
+            checkCalls(encodeSessionCall({ to: TOKEN, data: transferData(someone, 1n) }), withModule).allowed,
+            true,
+        );
     });
 
     it("refuses everything else", () => {
@@ -76,7 +161,10 @@ describe("sponsorship policy", () => {
             "empty batch": encodeFunctionData({ abi: smartAccountAbi, functionName: "executeBatch", args: [[]] }),
         };
         for (const [name, callData] of Object.entries(cases)) {
-            assert.equal(checkCalls(callData, TOKEN).allowed, false, `${name} must not be sponsored`);
+            // Configuring a module changes none of these.
+            for (const context of [tokenOnly, withModule]) {
+                assert.equal(checkCalls(callData, context).allowed, false, `${name} must not be sponsored`);
+            }
         }
     });
 });
