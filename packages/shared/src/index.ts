@@ -9,3 +9,22 @@ export {
     xpubFromMnemonic,
     type GeneratedWallet,
 } from "./hd.ts";
+export {
+    buildSumTree,
+    computeSumRoot,
+    EMPTY_NODE,
+    hashLeaf,
+    hashNode,
+    MAX_SUM,
+    proveLeaf,
+    sumProofFromJson,
+    sumProofToJson,
+    verifySumProof,
+    type Leaf,
+    type ProofStep,
+    type SumNode,
+    type SumProof,
+    type SumProofJson,
+    type SumTree,
+    type VerifyResult,
+} from "./merkle-sum.ts";
