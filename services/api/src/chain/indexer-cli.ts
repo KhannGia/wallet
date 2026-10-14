@@ -4,7 +4,7 @@ import type { Address } from "viem";
 
 import { createChainClient } from "./client.ts";
 import { createPool } from "../db/pool.ts";
-import { runIndexerOnce, type IndexerConfig } from "./indexer.ts";
+import { runIndexerOnce, USDC_SCANNER_ID, type IndexerConfig } from "./indexer.ts";
 import type { FinalityStrategy } from "./finality.ts";
 
 const env = loadEnv();
@@ -23,7 +23,7 @@ const finality: FinalityStrategy =
         : { kind: "finalized-tag" };
 
 const config: IndexerConfig = {
-    scannerId: "usdc",
+    scannerId: USDC_SCANNER_ID,
     token: env.USDC_ADDRESS as Address,
     startBlock: env.INDEXER_START_BLOCK,
     finality,

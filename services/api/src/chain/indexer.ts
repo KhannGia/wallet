@@ -11,6 +11,9 @@ import { finalisedThrough, type FinalityStrategy } from "./finality.ts";
 import { findReorgedDeposits } from "./reorg.ts";
 import { fetchIncomingTransfers } from "./scanner.ts";
 
+/** The indexer's scanner for the platform's token. Proof of reserves reads its cursor. */
+export const USDC_SCANNER_ID = "usdc";
+
 export interface IndexerConfig {
     scannerId: string;
     token: Address;
