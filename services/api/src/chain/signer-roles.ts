@@ -1,3 +1,4 @@
+import type { Env } from "@wallet/shared";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -5,6 +6,22 @@ import type { Pool } from "../db/pool.ts";
 
 /** The hot wallet's row in hot_wallets, written by the withdrawal worker. */
 export const HOT_WALLET_ID = "hot";
+
+/**
+ * Every key a process here signs with, by the variable that holds it. Each
+ * signing process checks all of them, not only its own: a reused key is a
+ * problem whichever two processes share it.
+ */
+export function signingKeys(env: Env): Record<string, string | undefined> {
+    return {
+        HOT_WALLET_PRIVATE_KEY: env.HOT_WALLET_PRIVATE_KEY,
+        GAS_FUNDER_PRIVATE_KEY: env.GAS_FUNDER_PRIVATE_KEY,
+        VAULT_SUBMITTER_PRIVATE_KEY: env.VAULT_SUBMITTER_PRIVATE_KEY,
+        PAYMASTER_SIGNER_PRIVATE_KEY: env.PAYMASTER_SIGNER_PRIVATE_KEY,
+        RECOVERY_RELAYER_PRIVATE_KEY: env.RECOVERY_RELAYER_PRIVATE_KEY,
+        RESERVES_PUBLISHER_PRIVATE_KEY: env.RESERVES_PUBLISHER_PRIVATE_KEY,
+    };
+}
 
 /**
  * Refuses any two roles that would sign from the same account.

@@ -198,6 +198,20 @@ const envSchema = z.object({
     .optional(),
   RECOVERY_POLL_MS: z.coerce.number().int().positive().default(10_000),
 
+  // --- Proof of reserves. Snapshots in the worker; roots published on chain. ---
+
+  /** The registry roots are published to. Without it, snapshots are taken but not published. */
+  RESERVES_REGISTRY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "RESERVES_REGISTRY_ADDRESS must be a 20-byte hex address")
+    .optional(),
+  /** The one key the registry accepts attestations from. Authorises nothing else. */
+  RESERVES_PUBLISHER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "RESERVES_PUBLISHER_PRIVATE_KEY must be a 32-byte hex key")
+    .optional(),
+  RESERVES_POLL_MS: z.coerce.number().int().positive().default(300_000),
+
   /** How long owners have to sign an automatic top-up. */
   REBALANCE_PROPOSAL_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
 }).superRefine((env, ctx) => {

@@ -8,7 +8,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { entryPoint08Address } from "viem/account-abstraction";
 
 import { createChainClient } from "../../chain/client.ts";
-import { assertDistinctSigners } from "../../chain/signer-roles.ts";
+import { assertDistinctSigners, signingKeys } from "../../chain/signer-roles.ts";
 import { createPool } from "../../db/pool.ts";
 import { buildPaymasterServer } from "./server.ts";
 import { createSponsor } from "./sponsor.ts";
@@ -29,13 +29,7 @@ if (missing.length > 0) {
 }
 
 try {
-    assertDistinctSigners({
-        HOT_WALLET_PRIVATE_KEY: env.HOT_WALLET_PRIVATE_KEY,
-        GAS_FUNDER_PRIVATE_KEY: env.GAS_FUNDER_PRIVATE_KEY,
-        VAULT_SUBMITTER_PRIVATE_KEY: env.VAULT_SUBMITTER_PRIVATE_KEY,
-        PAYMASTER_SIGNER_PRIVATE_KEY: env.PAYMASTER_SIGNER_PRIVATE_KEY,
-        RECOVERY_RELAYER_PRIVATE_KEY: env.RECOVERY_RELAYER_PRIVATE_KEY,
-    });
+    assertDistinctSigners(signingKeys(env));
 } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);

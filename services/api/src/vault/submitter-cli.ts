@@ -10,7 +10,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import { createChainClient } from "../chain/client.ts";
 import { describePlan, proposeTopUp, rebalanceMarks } from "../chain/rebalance.ts";
-import { assertDistinctSigners, registeredHotWallet } from "../chain/signer-roles.ts";
+import { assertDistinctSigners, signingKeys, registeredHotWallet } from "../chain/signer-roles.ts";
 import { createPool } from "../db/pool.ts";
 import { submitReadyProposals } from "./submitter.ts";
 
@@ -28,13 +28,7 @@ if (env.VAULT_SUBMITTER_PRIVATE_KEY === undefined || env.VAULT_ADDRESS === undef
 const account = privateKeyToAccount(env.VAULT_SUBMITTER_PRIVATE_KEY as `0x${string}`);
 
 try {
-    assertDistinctSigners({
-        HOT_WALLET_PRIVATE_KEY: env.HOT_WALLET_PRIVATE_KEY,
-        GAS_FUNDER_PRIVATE_KEY: env.GAS_FUNDER_PRIVATE_KEY,
-        VAULT_SUBMITTER_PRIVATE_KEY: env.VAULT_SUBMITTER_PRIVATE_KEY,
-        PAYMASTER_SIGNER_PRIVATE_KEY: env.PAYMASTER_SIGNER_PRIVATE_KEY,
-        RECOVERY_RELAYER_PRIVATE_KEY: env.RECOVERY_RELAYER_PRIVATE_KEY,
-    });
+    assertDistinctSigners(signingKeys(env));
 } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);

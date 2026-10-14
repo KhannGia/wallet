@@ -137,6 +137,12 @@ Indexer
 Vault
   vault-submitter Submit vault proposals that have reached their quorum
 
+Proof of reserves
+  deploy-reserves Deploy the registry attestations are published to (local only)
+  reserves        Snapshot reserves against liabilities and publish the root
+  verify-proof <proof.json>
+                  Check a user's proof against the root published on chain
+
 Smart accounts
   deploy-aa       Deploy the account factory and the paymaster (local only)
   paymaster       Serve gas sponsorships over ERC-7677 (holds the signer key)
@@ -203,6 +209,22 @@ case "${1:-help}" in
     deploy-aa)
         "${DC[@]}" up -d --wait bundler
         "${DC[@]}" run --rm -e PAYMASTER_SIGNER_PRIVATE_KEY forge "sh script/deploy-aa.sh"
+        ;;
+    deploy-reserves)
+        need_services
+        "${DC[@]}" run --rm -e RESERVES_PUBLISHER_PRIVATE_KEY -e USDC_ADDRESS forge "sh script/deploy-reserves.sh"
+        ;;
+    reserves)
+        need_services
+        "${DC[@]}" run --rm node-tools "npm run reserves --workspace @wallet/api"
+        ;;
+    verify-proof)
+        need_services
+        # The file is read inside the container, which sees the repository at
+        # the same relative paths: keep the proof somewhere under it.
+        [ -n "${2:-}" ] || { echo "Usage: ./wallet verify-proof <proof.json>" >&2; exit 1; }
+        "${DC[@]}" run --rm node-tools \
+            "npm run --silent verify-proof --workspace @wallet/api -- $(printf '%q' "$(realpath --relative-to=. "$2")")"
         ;;
     paymaster)
         need_services
