@@ -9,6 +9,7 @@ import { registerErrorHandler } from "./routes/errors.ts";
 import { registerGraduationRoutes } from "./routes/graduation.ts";
 import { registerLedgerRoutes } from "./routes/ledger.ts";
 import { registerRecoveryRoutes } from "./routes/recovery.ts";
+import { registerReservesRoutes } from "./routes/reserves.ts";
 import { registerVaultRoutes } from "./routes/vault.ts";
 
 export interface AppDeps {
@@ -67,6 +68,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     pool: deps.pool,
     client: deps.chain,
     module: deps.env.GUARDIAN_MODULE_ADDRESS,
+  });
+  registerReservesRoutes(app, {
+    pool: deps.pool,
+    client: deps.chain,
+    token: deps.env.USDC_ADDRESS,
+    vault: deps.env.VAULT_ADDRESS,
   });
   registerGraduationRoutes(app, {
     pool: deps.pool,
