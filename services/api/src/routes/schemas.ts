@@ -20,13 +20,6 @@ export const createUserSchema = z.object({
     email: z.string().email(),
 });
 
-export const depositSchema = z.object({
-    accountId: accountIdSchema,
-    amount: amountSchema,
-});
-
-export const withdrawalSchema = depositSchema;
-
 export const transferSchema = z.object({
     fromAccountId: accountIdSchema,
     toAccountId: accountIdSchema,

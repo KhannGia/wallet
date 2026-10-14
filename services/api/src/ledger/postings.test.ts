@@ -2,10 +2,10 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { withTransaction, type Pool } from "../db/pool.ts";
-import { assertBalanced, resetDatabase, seedAccount, testPool } from "../test-support/db.ts";
+import { assertBalanced, creditForTest, resetDatabase, seedAccount, testPool } from "../test-support/db.ts";
 import { InsufficientFunds, UnbalancedPostings } from "./errors.ts";
 import { postEntries } from "./postings.ts";
-import { deposit, reconcile, transfer, withdraw } from "./operations.ts";
+import { reconcile, transfer } from "./operations.ts";
 
 describe("double-entry postings", () => {
     let pool: Pool;
@@ -40,10 +40,10 @@ describe("double-entry postings", () => {
         await assertBalanced(pool);
     });
 
-    it("credits a deposit and keeps the system in balance", async () => {
+    it("credits money arriving from outside and keeps the system in balance", async () => {
         const account = await seedAccount(pool, "b@test", 0n);
 
-        const outcome = await deposit(pool, {
+        const outcome = await creditForTest(pool, {
             accountId: account,
             amount: 100_000n,
             idempotencyKey: "dep-1",
@@ -52,7 +52,7 @@ describe("double-entry postings", () => {
         assert.equal(outcome.result.balance, "100000");
         await assertBalanced(pool);
 
-        // The gateway holds the mirror image: money owed to the partner bank.
+        // The gateway holds the mirror image: money that came in from outside.
         const { rows } = await pool.query<{ balance: bigint }>(
             "SELECT balance FROM accounts WHERE system_key = 'BANK_GATEWAY'",
         );
@@ -61,9 +61,10 @@ describe("double-entry postings", () => {
 
     it("refuses to overdraw a user account", async () => {
         const account = await seedAccount(pool, "c@test", 100n);
+        const other = await seedAccount(pool, "c2@test", 0n);
 
         await assert.rejects(
-            withdraw(pool, { accountId: account, amount: 101n, idempotencyKey: "wd-1" }),
+            transfer(pool, { fromAccountId: account, toAccountId: other, amount: 101n, idempotencyKey: "wd-1" }),
             InsufficientFunds,
         );
 

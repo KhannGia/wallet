@@ -102,27 +102,6 @@ Run `./wallet help` for the full list. The ones used most:
 | `./wallet clean`    | Drop dependency volumes but keep the database          |
 | `./wallet nuke`     | Drop every volume, database included                   |
 
-## Trying the ledger
-
-```bash
-BASE=localhost:3000/api/v1
-
-# Create an account, then fund it.
-ACCOUNT=$(curl -s -X POST $BASE/users -H 'content-type: application/json' \
-    -d '{"email":"alice@example.com"}' | jq -r .accountId)
-
-curl -s -X POST $BASE/deposits -H 'content-type: application/json' \
-    -H 'Idempotency-Key: dep-1' -d "{\"accountId\":\"$ACCOUNT\",\"amount\":\"100000\"}"
-
-# Send the exact same request again: it returns the stored result with 200
-# instead of 201, and the balance does not move.
-curl -s -X POST $BASE/deposits -H 'content-type: application/json' \
-    -H 'Idempotency-Key: dep-1' -d "{\"accountId\":\"$ACCOUNT\",\"amount\":\"100000\"}"
-
-# The ledger must always sum to zero.
-curl -s $BASE/admin/reconciliation
-```
-
 ## Watching a deposit arrive
 
 ```bash
@@ -147,6 +126,31 @@ longer.
 
 Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
 every deployment is lost and `USDC_ADDRESS` has to be set again.
+
+## Moving money inside the ledger
+
+A balance comes only from a deposit like the one above: there is no endpoint
+that credits an account out of nothing, since nothing on chain would back it.
+Between users, money moves in the ledger alone -- free and instant.
+
+```bash
+BASE=localhost:3000/api/v1
+BOB=$(curl -s -X POST $BASE/users -H 'content-type: application/json' \
+    -d '{"email":"bob@example.com"}' | jq -r .accountId)
+
+curl -s -X POST $BASE/transfers -H 'content-type: application/json' \
+    -H 'Idempotency-Key: t-1' \
+    -d "{\"fromAccountId\":\"<accountId>\",\"toAccountId\":\"$BOB\",\"amount\":\"100000\"}"
+
+# Send the exact same request again: it returns the stored result with 200
+# instead of 201, and the money does not move twice.
+curl -s -X POST $BASE/transfers -H 'content-type: application/json' \
+    -H 'Idempotency-Key: t-1' \
+    -d "{\"fromAccountId\":\"<accountId>\",\"toAccountId\":\"$BOB\",\"amount\":\"100000\"}"
+
+# The ledger must always sum to zero.
+curl -s $BASE/admin/reconciliation
+```
 
 ## Paying out on chain
 

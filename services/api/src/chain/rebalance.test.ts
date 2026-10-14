@@ -12,7 +12,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import type { Pool } from "../db/pool.ts";
-import { createUser, deposit, reconcile } from "../ledger/operations.ts";
+import { createUser, reconcile } from "../ledger/operations.ts";
 import { refundWithdrawal, requestWithdrawal } from "../ledger/withdrawals.ts";
 import {
     anvilSigner,
@@ -24,7 +24,7 @@ import {
     type ChainHarness,
     type Signer,
 } from "../test-support/chain.ts";
-import { assertBalanced, resetDatabase, testPool, TEST_XPUB } from "../test-support/db.ts";
+import { assertBalanced, creditForTest, resetDatabase, testPool, TEST_XPUB } from "../test-support/db.ts";
 import { addSignature, getProposal, type Proposal } from "../vault/proposals.ts";
 import { submitReadyProposals } from "../vault/submitter.ts";
 import { executeTypedData } from "../vault/typed-data.ts";
@@ -194,7 +194,7 @@ describe("rebalancing against a vault", () => {
         await setUp({ hotBalance: 6_000n });
         const user = await createUser(pool, { email: "payout@rebalance.local", xpub: TEST_XPUB });
         const accountId = BigInt(user.accountId);
-        await deposit(pool, { accountId, amount: 10_000n, idempotencyKey: "rb-seed" });
+        await creditForTest(pool, { accountId, amount: 10_000n, idempotencyKey: "rb-seed" });
         await requestWithdrawal(pool, {
             accountId,
             to: "0x000000000000000000000000000000000000bEEF",

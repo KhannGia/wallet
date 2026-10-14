@@ -3,24 +3,14 @@ import type { Address } from "viem";
 
 import type { Pool } from "../db/pool.ts";
 import { MissingIdempotencyKey, PayoutsNotConfigured } from "../ledger/errors.ts";
-import {
-    createUser,
-    deposit,
-    getAccount,
-    listEntries,
-    reconcile,
-    transfer,
-    withdraw,
-} from "../ledger/operations.ts";
+import { createUser, getAccount, listEntries, reconcile, transfer } from "../ledger/operations.ts";
 import { requestWithdrawal } from "../ledger/withdrawals.ts";
 import {
     accountIdSchema,
     createUserSchema,
-    depositSchema,
     entriesQuerySchema,
     payoutSchema,
     transferSchema,
-    withdrawalSchema,
 } from "./schemas.ts";
 
 /**
@@ -64,17 +54,11 @@ export function registerLedgerRoutes(
     const respond = (reply: FastifyReply, outcome: { replayed: boolean; result: unknown }) =>
         reply.code(outcome.replayed ? 200 : 201).send(outcome.result);
 
-    app.post("/api/v1/deposits", async (request, reply) => {
-        const idempotencyKey = requireIdempotencyKey(request);
-        const { accountId, amount } = depositSchema.parse(request.body);
-        return respond(reply, await deposit(pool, { accountId, amount, idempotencyKey }));
-    });
-
-    app.post("/api/v1/withdrawals", async (request, reply) => {
-        const idempotencyKey = requireIdempotencyKey(request);
-        const { accountId, amount } = withdrawalSchema.parse(request.body);
-        return respond(reply, await withdraw(pool, { accountId, amount, idempotencyKey }));
-    });
+    // Money enters only from the chain, through the indexer, and leaves only
+    // to it, through /payouts. The ledger once had deposit and withdrawal
+    // endpoints that credited and debited a simulated bank instead; nothing
+    // backed those balances on chain, and proof of reserves would have had to
+    // either count them or pretend they were not owed.
 
     app.post("/api/v1/transfers", async (request, reply) => {
         const idempotencyKey = requireIdempotencyKey(request);

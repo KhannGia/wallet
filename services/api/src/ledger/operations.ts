@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import { deriveDepositAddress } from "@wallet/shared";
 
@@ -19,18 +19,6 @@ export interface MoneyMovement {
     accountId: string;
     amount: string;
     balance: string;
-}
-
-async function systemAccountId(client: PoolClient, key: string): Promise<bigint> {
-    const { rows } = await client.query<{ id: bigint }>(
-        "SELECT id FROM accounts WHERE system_key = $1",
-        [key],
-    );
-    const row = rows[0];
-    if (row === undefined) {
-        throw new Error(`System account ${key} is missing; run migrations`);
-    }
-    return row.id;
 }
 
 export interface CreatedUser {
@@ -99,64 +87,6 @@ export async function createUser(
     } finally {
         client.release();
     }
-}
-
-export async function deposit(
-    pool: Pool,
-    params: { accountId: bigint; amount: bigint; idempotencyKey: string },
-): Promise<IdempotentOutcome<MoneyMovement>> {
-    const body = { accountId: String(params.accountId), amount: String(params.amount) };
-
-    return runIdempotent(pool, { key: params.idempotencyKey, kind: "DEPOSIT", body }, async (client, txId) => {
-        const gateway = await systemAccountId(client, "BANK_GATEWAY");
-
-        // The gateway is debited so the two sides sum to zero: the money is
-        // modelled as moving in from the partner bank, not appearing.
-        const entries = await postEntries(client, txId, [
-            { accountId: gateway, amount: -params.amount },
-            { accountId: params.accountId, amount: params.amount },
-        ]);
-
-        const credited = entries.find((entry) => entry.accountId === params.accountId);
-        if (credited === undefined) {
-            throw new AccountNotFound(params.accountId);
-        }
-
-        return {
-            transactionId: String(txId),
-            accountId: String(params.accountId),
-            amount: String(params.amount),
-            balance: String(credited.balanceAfter),
-        };
-    });
-}
-
-export async function withdraw(
-    pool: Pool,
-    params: { accountId: bigint; amount: bigint; idempotencyKey: string },
-): Promise<IdempotentOutcome<MoneyMovement>> {
-    const body = { accountId: String(params.accountId), amount: String(params.amount) };
-
-    return runIdempotent(pool, { key: params.idempotencyKey, kind: "WITHDRAWAL", body }, async (client, txId) => {
-        const gateway = await systemAccountId(client, "BANK_GATEWAY");
-
-        const entries = await postEntries(client, txId, [
-            { accountId: params.accountId, amount: -params.amount },
-            { accountId: gateway, amount: params.amount },
-        ]);
-
-        const debited = entries.find((entry) => entry.accountId === params.accountId);
-        if (debited === undefined) {
-            throw new AccountNotFound(params.accountId);
-        }
-
-        return {
-            transactionId: String(txId),
-            accountId: String(params.accountId),
-            amount: String(params.amount),
-            balance: String(debited.balanceAfter),
-        };
-    });
 }
 
 export async function transfer(

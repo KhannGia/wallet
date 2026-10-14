@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 
 import type { Pool } from "../db/pool.ts";
 import { assertBalanced, resetDatabase, seedAccount, testPool } from "../test-support/db.ts";
+
+/** Any well-formed token address: these payouts never reach a worker. */
+const TOKEN = "0x00000000000000000000000000000000000000aa";
 import { InsufficientFunds } from "./errors.ts";
-import { deposit, transfer, withdraw } from "./operations.ts";
+import { transfer } from "./operations.ts";
+import { requestWithdrawal } from "./withdrawals.ts";
 import { postEntries } from "./postings.ts";
 
 /**
@@ -121,9 +125,11 @@ describe("concurrency", () => {
         // UPDATE all 20 read 100000, all 20 decide it is enough, and the
         // account ends up deeply negative.
         const attempts = Array.from({ length: 20 }, (_unused, index) =>
-            withdraw(pool, {
+            requestWithdrawal(pool, {
                 accountId: account,
+                to: "0x000000000000000000000000000000000000bEEF",
                 amount: 100_000n,
+                tokenAddress: TOKEN,
                 idempotencyKey: `race-${index}`,
             }).then(
                 () => "ok" as const,
@@ -183,10 +189,11 @@ describe("concurrency", () => {
     });
 
     it("creates one transaction when the same idempotency key arrives 10 times at once", async () => {
+        const source = await seedAccount(pool, "idem-source@race", 100_000n);
         const account = await seedAccount(pool, "idem@race", 0n);
 
         const attempts = Array.from({ length: 10 }, () =>
-            deposit(pool, { accountId: account, amount: 5_000n, idempotencyKey: "same-key" }),
+            transfer(pool, { fromAccountId: source, toAccountId: account, amount: 5_000n, idempotencyKey: "same-key" }),
         );
 
         const outcomes = await Promise.all(attempts);
