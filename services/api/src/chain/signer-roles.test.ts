@@ -1,6 +1,7 @@
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
+import { loadEnv } from "@wallet/shared";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import type { Pool } from "../db/pool.ts";
@@ -11,6 +12,7 @@ import {
     funderRunningLow,
     HOT_WALLET_ID,
     registeredHotWallet,
+    signingKeys,
 } from "./signer-roles.ts";
 
 describe("signer roles", () => {
@@ -45,6 +47,26 @@ describe("signer roles", () => {
         assert.throws(
             () => assertDistinctSigners({ hot, gasFunder: hot }),
             /hot and gasFunder use the same key/,
+        );
+    });
+
+    it("checks every signing role, the reserves publisher included", () => {
+        const roles = [
+            "HOT_WALLET_PRIVATE_KEY",
+            "GAS_FUNDER_PRIVATE_KEY",
+            "VAULT_SUBMITTER_PRIVATE_KEY",
+            "PAYMASTER_SIGNER_PRIVATE_KEY",
+            "RECOVERY_RELAYER_PRIVATE_KEY",
+            "RESERVES_PUBLISHER_PRIVATE_KEY",
+        ];
+        const keys = Object.fromEntries(roles.map((role) => [role, generatePrivateKey()]));
+        const env = loadEnv({ ...process.env, ...keys });
+        assert.deepEqual(signingKeys(env), keys);
+
+        // The publisher reusing any other role's key is refused like the rest.
+        assert.throws(
+            () => assertDistinctSigners(signingKeys(loadEnv({ ...process.env, ...keys, RESERVES_PUBLISHER_PRIVATE_KEY: keys.HOT_WALLET_PRIVATE_KEY }))),
+            /HOT_WALLET_PRIVATE_KEY and RESERVES_PUBLISHER_PRIVATE_KEY use the same key/,
         );
     });
 

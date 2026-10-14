@@ -15,7 +15,9 @@
     "vault-submitter": "node src/vault/submitter-cli.ts",
     "paymaster": "node src/aa/paymaster/paymaster-cli.ts",
     "recovery-relayer": "node src/aa/recovery/relayer-cli.ts",
-    "session-manager": "node src/aa/sessions/session-manager-cli.ts"
+    "session-manager": "node src/aa/sessions/session-manager-cli.ts",
+    "reserves": "node src/reserves/reserves-cli.ts",
+    "verify-proof": "node src/reserves/verify-cli.ts"
   },
   "dependencies": {
     "@wallet/shared": "*",
