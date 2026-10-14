@@ -1,4 +1,7 @@
-import { erc20Abi, getAddress, type Address, type Hash, type PublicClient } from "viem";
+import { randomBytes } from "node:crypto";
+
+import { buildSumTree, type SumNode } from "@wallet/shared";
+import { erc20Abi, getAddress, toHex, type Address, type Hash, type PublicClient } from "viem";
 
 import { one, type Pool, type PoolClient } from "../db/pool.ts";
 import { receiptMovedTokens } from "../chain/receipts.ts";
@@ -258,9 +261,14 @@ export async function computeReserves(
 export interface ReservesSnapshot {
     id: bigint;
     report: ReservesReport;
+    /** The Merkle sum tree's root: its sum is the liabilities. */
+    root: SumNode;
 }
 
-/** Computes the reserves and records them, with what each account was owed. */
+/**
+ * Computes the reserves and records them, with what each account was owed and
+ * the Merkle sum tree over those amounts. Every account's salt is drawn fresh.
+ */
 export async function takeReservesSnapshot(
     deps: { pool: Pool; client: PublicClient },
     config: ReservesConfig,
@@ -273,32 +281,42 @@ export async function takeReservesSnapshot(
         minedNotSettled: String(report.liabilities.minedNotSettled),
     };
 
+    const leaves = report.liabilities.accounts.map((account) => ({
+        salt: toHex(randomBytes(32)),
+        accountId: account.accountId,
+        amount: account.amount,
+    }));
+    // Built from the same amounts the liabilities total, so its root sums to them.
+    const { root } = buildSumTree(leaves);
+
     const client = await deps.pool.connect();
     try {
         await client.query("BEGIN");
         const { id } = one(
             (
                 await client.query<{ id: bigint }>(
-                    `INSERT INTO reserve_snapshots (token_address, block_number, assets, liabilities, detail)
-                     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-                    [report.token, report.blockNumber, report.assets.total, report.liabilities.total, detail],
+                    `INSERT INTO reserve_snapshots
+                         (token_address, block_number, assets, liabilities, detail, root_hash)
+                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+                    [report.token, report.blockNumber, report.assets.total, report.liabilities.total, detail, root.hash],
                 )
             ).rows,
             "snapshot",
         );
-        if (report.liabilities.accounts.length > 0) {
+        if (leaves.length > 0) {
             await client.query(
-                `INSERT INTO reserve_liabilities (snapshot_id, account_id, amount)
-                 SELECT $1, * FROM unnest($2::BIGINT[], $3::NUMERIC[])`,
+                `INSERT INTO reserve_liabilities (snapshot_id, account_id, amount, salt)
+                 SELECT $1, * FROM unnest($2::BIGINT[], $3::NUMERIC[], $4::TEXT[])`,
                 [
                     id,
-                    report.liabilities.accounts.map((a) => a.accountId),
-                    report.liabilities.accounts.map((a) => a.amount.toString()),
+                    leaves.map((leaf) => leaf.accountId),
+                    leaves.map((leaf) => leaf.amount.toString()),
+                    leaves.map((leaf) => leaf.salt),
                 ],
             );
         }
         await client.query("COMMIT");
-        return { id, report };
+        return { id, report, root };
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -315,22 +333,34 @@ export interface StoredSnapshot {
     liabilities: bigint;
     surplus: bigint;
     solvent: boolean;
+    /** Null for snapshots taken before the tree existed. */
+    rootHash: Hash | null;
     detail: unknown;
     createdAt: Date;
 }
 
+interface SnapshotRow {
+    id: bigint;
+    token_address: string;
+    block_number: bigint;
+    assets: string;
+    liabilities: string;
+    root_hash: string | null;
+    detail: unknown;
+    created_at: Date;
+}
+
 export async function latestReservesSnapshot(pool: Pool): Promise<StoredSnapshot | null> {
-    const { rows } = await pool.query<{
-        id: bigint;
-        token_address: string;
-        block_number: bigint;
-        assets: string;
-        liabilities: string;
-        detail: unknown;
-        created_at: Date;
-    }>("SELECT * FROM reserve_snapshots ORDER BY id DESC LIMIT 1");
-    const row = rows[0];
-    if (row === undefined) return null;
+    const { rows } = await pool.query<SnapshotRow>("SELECT * FROM reserve_snapshots ORDER BY id DESC LIMIT 1");
+    return rows[0] === undefined ? null : toStoredSnapshot(rows[0]);
+}
+
+export async function getReservesSnapshot(pool: Pool, id: bigint): Promise<StoredSnapshot | null> {
+    const { rows } = await pool.query<SnapshotRow>("SELECT * FROM reserve_snapshots WHERE id = $1", [id]);
+    return rows[0] === undefined ? null : toStoredSnapshot(rows[0]);
+}
+
+function toStoredSnapshot(row: SnapshotRow): StoredSnapshot {
     const assets = BigInt(row.assets);
     const liabilities = BigInt(row.liabilities);
     return {
@@ -341,6 +371,7 @@ export async function latestReservesSnapshot(pool: Pool): Promise<StoredSnapshot
         liabilities,
         surplus: assets - liabilities,
         solvent: assets >= liabilities,
+        rootHash: row.root_hash as Hash | null,
         detail: row.detail,
         createdAt: row.created_at,
     };

@@ -1,7 +1,7 @@
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { loadEnv, localChain, type Env } from "@wallet/shared";
+import { loadEnv, localChain, sumProofFromJson, verifySumProof, type Env } from "@wallet/shared";
 import { erc20Abi, getAddress, type Address } from "viem";
 
 import { buildApp, createDeps, type AppDeps } from "../app.ts";
@@ -339,5 +339,130 @@ describe("proof of reserves: what the platform holds against what it owes", () =
             ],
         );
         assert.equal(await balanceOf(alice.address), 1_000_000n);
+    });
+
+    describe("each user's proof", () => {
+        let app: ReturnType<typeof buildApp>;
+        beforeEach(() => {
+            app = buildApp({ ...shared, env: { ...shared.env, USDC_ADDRESS: token, VAULT_ADDRESS: VAULT } });
+        });
+        const close = () => app.close();
+        const proofOf = (id: unknown, accountId: unknown) =>
+            app.inject({ method: "GET", url: `/api/v1/reserves/${id}/proof/${accountId}` });
+
+        it("proves every user's share into the root, whose sum is the liabilities", async () => {
+            try {
+                await user("skip-index-0@reserves.local");
+                const alice = await user("alice@reserves.local");
+                const bob = await user("bob@reserves.local");
+                const carol = await user("carol@reserves.local");
+                await mintTo(harness, token, alice.address, 1_000_000n);
+                await mintTo(harness, token, bob.address, 2_500_000n);
+                await index(1n);
+
+                const snapshot = await takeReservesSnapshot(deps(), config());
+                assert.equal(snapshot.root.sum, 3_500_000n);
+
+                const latest = (await app.inject({ method: "GET", url: "/api/v1/reserves/latest" })).json();
+                assert.equal(latest.rootHash, snapshot.root.hash);
+                assert.equal(latest.liabilities, "3500000");
+                assert.equal(latest.detail, undefined, "the breakdown stays with the admin endpoint");
+
+                for (const [who, owed] of [[alice, 1_000_000n], [bob, 2_500_000n], [carol, 0n]] as const) {
+                    const response = await proofOf(snapshot.id, who.accountId);
+                    assert.equal(response.statusCode, 200, response.body);
+                    const body = response.json();
+                    assert.deepEqual(body.root, { hash: snapshot.root.hash, sum: "3500000" });
+
+                    // What a user does with it, trusting nothing but the published root.
+                    const proof = sumProofFromJson(body.proof);
+                    assert.equal(proof.leaf.accountId, who.accountId);
+                    assert.equal(proof.leaf.amount, owed);
+                    assert.equal(verifySumProof(proof, { hash: body.root.hash, sum: BigInt(body.root.sum) }).valid, true);
+                }
+            } finally {
+                await close();
+            }
+        });
+
+        it("draws fresh salts every snapshot, so leaves cannot be linked across them", async () => {
+            try {
+                await user("skip-index-0@reserves.local");
+                const alice = await user("alice@reserves.local");
+                await mintTo(harness, token, alice.address, 1_000_000n);
+                await index(1n);
+
+                const first = await takeReservesSnapshot(deps(), config());
+                const second = await takeReservesSnapshot(deps(), config());
+                assert.equal(first.root.sum, second.root.sum);
+                assert.notEqual(first.root.hash, second.root.hash);
+
+                const salts = await Promise.all(
+                    [first, second].map(async (snapshot) => (await proofOf(snapshot.id, alice.accountId)).json().proof.leaf.salt),
+                );
+                assert.notEqual(salts[0], salts[1]);
+            } finally {
+                await close();
+            }
+        });
+
+        it("refuses unknown snapshots and accounts, old snapshots, and rows changed since", async () => {
+            try {
+                await user("skip-index-0@reserves.local");
+                const alice = await user("alice@reserves.local");
+                await mintTo(harness, token, alice.address, 1_000_000n);
+                await index(1n);
+                const snapshot = await takeReservesSnapshot(deps(), config());
+
+                assert.equal((await proofOf(999_999, alice.accountId)).json().error, "reserves_snapshot_not_found");
+                const late = await user("late@reserves.local");
+                assert.equal((await proofOf(snapshot.id, late.accountId)).json().error, "not_in_snapshot");
+                assert.equal((await proofOf("abc", alice.accountId)).statusCode, 400);
+
+                // A snapshot from before snapshots had a tree.
+                const { rows } = await shared.pool.query<{ id: bigint }>(
+                    `INSERT INTO reserve_snapshots (token_address, block_number, assets, liabilities, detail)
+                     VALUES ($1, 0, 0, 0, '{}') RETURNING id`,
+                    [token],
+                );
+                assert.equal((await proofOf(rows[0]!.id, alice.accountId)).json().error, "no_tree_for_snapshot");
+
+                // A total edited after the root was recorded, then an amount:
+                // no proof is handed out for a tree that no longer matches.
+                await shared.pool.query("UPDATE reserve_snapshots SET liabilities = liabilities + 1 WHERE id = $1", [
+                    snapshot.id,
+                ]);
+                assert.equal((await proofOf(snapshot.id, alice.accountId)).statusCode, 500);
+                await shared.pool.query("UPDATE reserve_snapshots SET liabilities = liabilities - 1 WHERE id = $1", [
+                    snapshot.id,
+                ]);
+                assert.equal((await proofOf(snapshot.id, alice.accountId)).statusCode, 200);
+
+                // A salt swapped: the total is unchanged, the tree is not.
+                const [saltRow] = (
+                    await shared.pool.query<{ salt: string }>(
+                        "SELECT salt FROM reserve_liabilities WHERE snapshot_id = $1 AND account_id = $2",
+                        [snapshot.id, alice.accountId],
+                    )
+                ).rows;
+                await shared.pool.query(
+                    "UPDATE reserve_liabilities SET salt = $3 WHERE snapshot_id = $1 AND account_id = $2",
+                    [snapshot.id, alice.accountId, `0x${"ab".repeat(32)}`],
+                );
+                assert.equal((await proofOf(snapshot.id, alice.accountId)).statusCode, 500);
+                await shared.pool.query(
+                    "UPDATE reserve_liabilities SET salt = $3 WHERE snapshot_id = $1 AND account_id = $2",
+                    [snapshot.id, alice.accountId, saltRow!.salt],
+                );
+
+                await shared.pool.query(
+                    "UPDATE reserve_liabilities SET amount = amount + 1 WHERE snapshot_id = $1 AND account_id = $2",
+                    [snapshot.id, alice.accountId],
+                );
+                assert.equal((await proofOf(snapshot.id, alice.accountId)).statusCode, 500);
+            } finally {
+                await close();
+            }
+        });
     });
 });

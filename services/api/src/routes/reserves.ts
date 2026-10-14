@@ -1,15 +1,18 @@
+import { sumProofToJson } from "@wallet/shared";
 import type { FastifyInstance } from "fastify";
 import type { Address, PublicClient } from "viem";
 
 import type { Pool } from "../db/pool.ts";
 import { USDC_SCANNER_ID } from "../chain/indexer.ts";
 import { NoReservesSnapshot, ReservesNotConfigured } from "../reserves/errors.ts";
+import { proveLiability } from "../reserves/proofs.ts";
 import {
     latestReservesSnapshot,
     takeReservesSnapshot,
     type ReservesConfig,
     type StoredSnapshot,
 } from "../reserves/reserves.ts";
+import { accountIdSchema, proposalIdSchema } from "./schemas.ts";
 
 function present(snapshot: StoredSnapshot) {
     return {
@@ -20,6 +23,7 @@ function present(snapshot: StoredSnapshot) {
         liabilities: snapshot.liabilities.toString(),
         surplus: snapshot.surplus.toString(),
         solvent: snapshot.solvent,
+        rootHash: snapshot.rootHash,
         detail: snapshot.detail,
         createdAt: snapshot.createdAt.toISOString(),
     };
@@ -48,6 +52,33 @@ export function registerReservesRoutes(
         const snapshot = await latestReservesSnapshot(pool);
         if (snapshot === null) throw new NoReservesSnapshot();
         return reply.code(snapshot.solvent ? 200 : 500).send(present(snapshot));
+    });
+
+    // Public: what any user needs to check their own balance against the
+    // total. The latest snapshot's root, and each user's proof into it.
+    app.get("/api/v1/reserves/latest", async () => {
+        requireConfig();
+        const snapshot = await latestReservesSnapshot(pool);
+        if (snapshot === null) throw new NoReservesSnapshot();
+        const { detail: _detail, ...summary } = present(snapshot);
+        return summary;
+    });
+
+    app.get("/api/v1/reserves/:id/proof/:accountId", async (request) => {
+        requireConfig();
+        const params = request.params as { id: string; accountId: string };
+        const { snapshot, root, proof } = await proveLiability(
+            pool,
+            proposalIdSchema.parse(params.id),
+            accountIdSchema.parse(params.accountId),
+        );
+        return {
+            snapshotId: snapshot.id.toString(),
+            token: snapshot.token,
+            blockNumber: snapshot.blockNumber.toString(),
+            root: { hash: root.hash, sum: root.sum.toString() },
+            proof: sumProofToJson(proof),
+        };
     });
 
     app.post("/api/v1/admin/reserves", async (_request, reply) => {
