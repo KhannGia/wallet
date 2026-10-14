@@ -90,7 +90,7 @@ export async function postEntries(
         const balanceAfter = account.balance + amount;
 
         // System accounts are allowed to run negative: BANK_GATEWAY holding a
-        // large negative balance is the money sitting at the partner bank.
+        // large negative balance is the money users brought in from the chain.
         if (account.type === "USER" && balanceAfter < 0n) {
             throw new InsufficientFunds(accountId, account.balance, -amount);
         }

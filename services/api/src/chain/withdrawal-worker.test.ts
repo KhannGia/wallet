@@ -6,7 +6,7 @@ import type { Address } from "viem";
 
 import { withTransaction, type Pool } from "../db/pool.ts";
 import { InsufficientFunds } from "../ledger/errors.ts";
-import { createUser, deposit, getAccount } from "../ledger/operations.ts";
+import { createUser, getAccount } from "../ledger/operations.ts";
 import { requestWithdrawal, reservedBalance } from "../ledger/withdrawals.ts";
 import {
     anvilSigner,
@@ -17,7 +17,7 @@ import {
     type ChainHarness,
     type Signer,
 } from "../test-support/chain.ts";
-import { assertBalanced, resetDatabase, testPool, TEST_XPUB } from "../test-support/db.ts";
+import { assertBalanced, creditForTest, resetDatabase, testPool, TEST_XPUB } from "../test-support/db.ts";
 import { allocateNonce, peekNonce, registerHotWallet } from "./nonce.ts";
 import { runWithdrawalWorkerOnce, type WorkerConfig, type WorkerDeps } from "./withdrawal-worker.ts";
 
@@ -69,7 +69,7 @@ describe("withdrawal worker", () => {
     const fundedAccount = async (email: string, amount: bigint) => {
         const user = await createUser(pool, { email, xpub: TEST_XPUB });
         const accountId = BigInt(user.accountId);
-        await deposit(pool, { accountId, amount, idempotencyKey: `seed-${email}` });
+        await creditForTest(pool, { accountId, amount, idempotencyKey: `seed-${email}` });
         return accountId;
     };
 

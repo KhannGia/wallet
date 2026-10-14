@@ -2,7 +2,11 @@ import { loadEnv, xpubFromMnemonic } from "@wallet/shared";
 
 import { createPool, type Pool } from "../db/pool.ts";
 import { migrate } from "../db/migrate.ts";
-import { reconcile } from "../ledger/operations.ts";
+import { AccountNotFound } from "../ledger/errors.ts";
+import { runIdempotent, type IdempotentOutcome } from "../ledger/idempotency.ts";
+import { createUser, reconcile } from "../ledger/operations.ts";
+import { postEntries } from "../ledger/postings.ts";
+import { systemAccountId } from "../ledger/system-accounts.ts";
 
 /**
  * The public Foundry test mnemonic. Its xpub is fine to hardcode here: the
@@ -54,16 +58,39 @@ export async function assertBalanced(pool: Pool): Promise<void> {
     }
 }
 
+/**
+ * Credits an account from BANK_GATEWAY, as if a deposit had arrived and become
+ * final. A fixture, not a feature: the product has no way to create a balance
+ * except a deposit the indexer sees on chain. Tests that only exercise the
+ * ledger use this to skip the chain; nothing on chain backs these balances, so
+ * proof-of-reserves tests fund accounts through real deposits instead.
+ */
+export async function creditForTest(
+    pool: Pool,
+    params: { accountId: bigint; amount: bigint; idempotencyKey: string },
+): Promise<IdempotentOutcome<{ balance: string }>> {
+    const body = { accountId: String(params.accountId), amount: String(params.amount) };
+    return runIdempotent(pool, { key: params.idempotencyKey, kind: "DEPOSIT", body }, async (client, txId) => {
+        const gateway = await systemAccountId(client, "BANK_GATEWAY");
+        const entries = await postEntries(client, txId, [
+            { accountId: gateway, amount: -params.amount },
+            { accountId: params.accountId, amount: params.amount },
+        ]);
+        const credited = entries.find((entry) => entry.accountId === params.accountId);
+        if (credited === undefined) throw new AccountNotFound(params.accountId);
+        return { balance: String(credited.balanceAfter) };
+    });
+}
+
 export async function seedAccount(pool: Pool, email: string, balance: bigint): Promise<bigint> {
     // Goes through createUser rather than raw INSERTs so seeded accounts get a
     // derivation index and deposit address like real ones, and the schema
     // constraints are exercised by the tests too.
-    const { createUser, deposit } = await import("../ledger/operations.ts");
     const created = await createUser(pool, { email, xpub: TEST_XPUB });
     const accountId = BigInt(created.accountId);
 
     if (balance > 0n) {
-        await deposit(pool, {
+        await creditForTest(pool, {
             accountId,
             amount: balance,
             idempotencyKey: `seed-${accountId}-${balance}`,

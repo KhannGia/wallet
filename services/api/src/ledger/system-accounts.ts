@@ -2,8 +2,9 @@ import type { PoolClient } from "../db/pool.ts";
 
 /**
  * The book-keeping counterparties. None of them belongs to a user, and all are
- * expected to run negative -- BANK_GATEWAY holding a large negative balance is
- * the money held at the partner bank, not a bug.
+ * expected to run negative -- BANK_GATEWAY is the outside world, the other side
+ * of every deposit and payout, and its large negative balance is what users
+ * have brought in on chain net of what has been paid out. Not a bug.
  */
 export type SystemAccount =
     | "BANK_GATEWAY"

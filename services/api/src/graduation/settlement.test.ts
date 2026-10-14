@@ -10,7 +10,7 @@ import { buildApp, createDeps, type AppDeps } from "../app.ts";
 import { toWalletSmartAccount } from "../aa/smart-account.ts";
 import { registerHotWallet } from "../chain/nonce.ts";
 import { runWithdrawalWorkerOnce, type WorkerConfig } from "../chain/withdrawal-worker.ts";
-import { deposit, getAccount } from "../ledger/operations.ts";
+import { getAccount } from "../ledger/operations.ts";
 import {
     anvilSigner,
     chainHarness,
@@ -23,7 +23,7 @@ import {
     type ChainHarness,
     type Signer,
 } from "../test-support/chain.ts";
-import { assertBalanced, resetDatabase, seedAccount } from "../test-support/db.ts";
+import { assertBalanced, creditForTest, resetDatabase, seedAccount } from "../test-support/db.ts";
 
 const ONE_ETHER = 10n ** 18n;
 
@@ -226,7 +226,7 @@ describe("graduation: settlement through the withdrawal worker", () => {
         assert.equal((await read(first.graduation.id)).status, "COMPLETED");
 
         // Custody stays open after graduating: a deposit lands, and goes too.
-        await deposit(shared.pool, { accountId: first.accountId, amount: 2_000_000n, idempotencyKey: "later" });
+        await creditForTest(shared.pool, { accountId: first.accountId, amount: 2_000_000n, idempotencyKey: "later" });
         const second = await funded(0n, first.owner, first.accountId);
         assert.equal(second.graduation.smartAccount, first.graduation.smartAccount);
         assert.equal(second.graduation.amount, "2000000");
