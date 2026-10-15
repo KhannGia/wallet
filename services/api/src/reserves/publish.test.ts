@@ -17,6 +17,7 @@ import {
     sendEther,
     type ChainHarness,
 } from "../test-support/chain.ts";
+import { sessionFor } from "../test-support/auth.ts";
 import { resetDatabase, TEST_XPUB } from "../test-support/db.ts";
 import { reservesRegistryAbi, runReservesOnce } from "./publisher.ts";
 import { takeReservesSnapshot } from "./reserves.ts";
@@ -93,7 +94,11 @@ describe("proof of reserves: published on chain, verified by the user", () => {
     }
 
     const proofOf = async (snapshotId: bigint, accountId: bigint) => {
-        const response = await app.inject({ method: "GET", url: `/api/v1/reserves/${snapshotId}/proof/${accountId}` });
+        const response = await app.inject({
+            method: "GET",
+            url: `/api/v1/reserves/${snapshotId}/proof/${accountId}`,
+            headers: await sessionFor(shared.pool, accountId),
+        });
         assert.equal(response.statusCode, 200, response.body);
         return response.json();
     };

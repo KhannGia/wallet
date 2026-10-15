@@ -5,6 +5,7 @@ import { loadEnv, type Env } from "@wallet/shared";
 
 import { createChainClient } from "./chain/client.ts";
 import { createPool, type Pool } from "./db/pool.ts";
+import { registerAuthRoutes } from "./routes/auth.ts";
 import { registerErrorHandler } from "./routes/errors.ts";
 import { registerGraduationRoutes } from "./routes/graduation.ts";
 import { registerLedgerRoutes } from "./routes/ledger.ts";
@@ -62,8 +63,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   registerErrorHandler(app);
-  registerLedgerRoutes(app, deps.pool, deps.env.WALLET_XPUB, deps.env.USDC_ADDRESS);
-  registerVaultRoutes(app, { pool: deps.pool, client: deps.chain, vault: deps.env.VAULT_ADDRESS });
+  const auth = { adminToken: deps.env.API_ADMIN_TOKEN, sessionTtlSeconds: deps.env.AUTH_SESSION_TTL_SECONDS };
+  registerAuthRoutes(app, deps.pool, auth);
+  registerLedgerRoutes(app, deps.pool, deps.env.WALLET_XPUB, deps.env.USDC_ADDRESS, auth);
+  registerVaultRoutes(app, {
+    pool: deps.pool,
+    client: deps.chain,
+    vault: deps.env.VAULT_ADDRESS,
+    adminToken: deps.env.API_ADMIN_TOKEN,
+  });
   registerRecoveryRoutes(app, {
     pool: deps.pool,
     client: deps.chain,
@@ -74,6 +82,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     client: deps.chain,
     token: deps.env.USDC_ADDRESS,
     vault: deps.env.VAULT_ADDRESS,
+    adminToken: deps.env.API_ADMIN_TOKEN,
   });
   registerGraduationRoutes(app, {
     pool: deps.pool,

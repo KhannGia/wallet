@@ -117,15 +117,17 @@ Run `./wallet help` for the full list. The ones used most:
 ./wallet deploy-token          # prints USDC_ADDRESS=0x...; paste it into .env
 ./wallet indexer               # in another terminal
 
-ACCOUNT=$(curl -s -X POST localhost:3000/api/v1/users \
-    -H 'content-type: application/json' -d '{"email":"a@example.com"}')
-echo "$ACCOUNT"                # note depositAddress and accountId
+# Signing up opens an account and signs in: the response carries a token.
+ACCOUNT=$(curl -s -X POST localhost:3000/api/v1/users -H 'content-type: application/json' \
+    -d '{"email":"a@example.com","password":"correct horse battery staple"}')
+echo "$ACCOUNT"                # note depositAddress, accountId and token
+TOKEN=$(echo "$ACCOUNT" | jq -r .token)
 
 # Send tokens to that deposit address, then watch the balance.
 ./wallet cast "send $USDC_ADDRESS 'mint(address,uint256)' <depositAddress> 250000000 \
     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
-curl -s localhost:3000/api/v1/accounts/<accountId>
+curl -s localhost:3000/api/v1/accounts/<accountId> -H "Authorization: Bearer $TOKEN"
 ```
 
 The deposit appears first as `pendingBalance` and moves into `balance` once its
@@ -144,20 +146,21 @@ Between users, money moves in the ledger alone -- free and instant.
 ```bash
 BASE=localhost:3000/api/v1
 BOB=$(curl -s -X POST $BASE/users -H 'content-type: application/json' \
-    -d '{"email":"bob@example.com"}' | jq -r .accountId)
+    -d '{"email":"bob@example.com","password":"another long passphrase"}' | jq -r .accountId)
 
+# Spending needs the owner's token; receiving needs only an account id.
 curl -s -X POST $BASE/transfers -H 'content-type: application/json' \
-    -H 'Idempotency-Key: t-1' \
+    -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: t-1' \
     -d "{\"fromAccountId\":\"<accountId>\",\"toAccountId\":\"$BOB\",\"amount\":\"100000\"}"
 
 # Send the exact same request again: it returns the stored result with 200
 # instead of 201, and the money does not move twice.
 curl -s -X POST $BASE/transfers -H 'content-type: application/json' \
-    -H 'Idempotency-Key: t-1' \
+    -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: t-1' \
     -d "{\"fromAccountId\":\"<accountId>\",\"toAccountId\":\"$BOB\",\"amount\":\"100000\"}"
 
-# The ledger must always sum to zero.
-curl -s $BASE/admin/reconciliation
+# The ledger must always sum to zero. Admin endpoints take API_ADMIN_TOKEN.
+curl -s $BASE/admin/reconciliation -H "Authorization: Bearer $API_ADMIN_TOKEN"
 ```
 
 ## Paying out on chain
@@ -168,7 +171,7 @@ curl -s $BASE/admin/reconciliation
 ./wallet withdrawer            # in another terminal
 
 curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json' \
-    -H 'Idempotency-Key: p1' \
+    -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: p1' \
     -d '{"accountId":"5","to":"0x...","amount":"320000000"}'
 ```
 
@@ -183,7 +186,7 @@ gas.
 ./wallet reserves            # snapshot + publish, every RESERVES_POLL_MS
 
 curl -s localhost:3000/api/v1/reserves/latest
-curl -s localhost:3000/api/v1/reserves/<id>/proof/<accountId> > proof.json
+curl -s localhost:3000/api/v1/reserves/<id>/proof/<accountId> -H "Authorization: Bearer $TOKEN" > proof.json
 ./wallet verify-proof proof.json
 ```
 
@@ -236,9 +239,8 @@ that passes the shrunk node as a sibling. Sibling totals reveal neighbours'
 balances, though not whose. The assets figure is the platform's claim, not
 proven: anyone can re-read the hot wallet and vault at the attested block, but
 nothing proves the platform owns every address it counts, nor lists every
-deposit address publicly. And the proof endpoint, like the rest of the API, has
-no user authentication yet, so the salt protects against enumeration only once
-it does.
+deposit address publicly. A proof is handed only to its account's signed-in
+owner (since P16), so its salt stays theirs.
 
 **What testing found.** Mutations across the reserves read, the tree, the
 snapshot, the registry, the publisher and the verifier: of forty-seven,
@@ -327,9 +329,8 @@ mutations, twenty-one fail a test; the last, a `FUNDING` guard on the status
 update, is equivalent, since a graduation with a payout in flight is always
 funding.
 
-**Known limit.** Like `/payouts`, the graduation endpoints trust the caller to
-hold the account: the API has no user authentication yet. The P16 threat model
-records it.
+**Who may graduate.** Since P16, only the account's signed-in owner: anyone
+else is answered 404, as if the account or the graduation did not exist.
 
 ## What P13 demonstrates
 

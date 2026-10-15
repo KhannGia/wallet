@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { Address, PublicClient } from "viem";
 
 import type { Pool } from "../db/pool.ts";
+import { requireAccountOwner, requireAdmin } from "../auth/sessions.ts";
 import { USDC_SCANNER_ID } from "../chain/indexer.ts";
 import { NoReservesSnapshot, ReservesNotConfigured } from "../reserves/errors.ts";
 import { proveLiability } from "../reserves/proofs.ts";
@@ -35,7 +36,13 @@ function present(snapshot: StoredSnapshot) {
  */
 export function registerReservesRoutes(
     app: FastifyInstance,
-    deps: { pool: Pool; client: PublicClient; token: string | undefined; vault: string | undefined },
+    deps: {
+        pool: Pool;
+        client: PublicClient;
+        token: string | undefined;
+        vault: string | undefined;
+        adminToken: string | undefined;
+    },
 ): void {
     const { pool, client } = deps;
     const requireConfig = (): ReservesConfig => {
@@ -47,7 +54,8 @@ export function registerReservesRoutes(
         };
     };
 
-    app.get("/api/v1/admin/reserves", async (_request, reply) => {
+    app.get("/api/v1/admin/reserves", async (request, reply) => {
+        requireAdmin(request, deps.adminToken);
         requireConfig();
         const snapshot = await latestReservesSnapshot(pool);
         if (snapshot === null) throw new NoReservesSnapshot();
@@ -67,11 +75,10 @@ export function registerReservesRoutes(
     app.get("/api/v1/reserves/:id/proof/:accountId", async (request) => {
         requireConfig();
         const params = request.params as { id: string; accountId: string };
-        const { snapshot, root, proof } = await proveLiability(
-            pool,
-            proposalIdSchema.parse(params.id),
-            accountIdSchema.parse(params.accountId),
-        );
+        const accountId = accountIdSchema.parse(params.accountId);
+        // A proof carries the salt that hides the balance from everyone else.
+        await requireAccountOwner(pool, request, accountId);
+        const { snapshot, root, proof } = await proveLiability(pool, proposalIdSchema.parse(params.id), accountId);
         return {
             snapshotId: snapshot.id.toString(),
             token: snapshot.token,
@@ -81,7 +88,8 @@ export function registerReservesRoutes(
         };
     });
 
-    app.post("/api/v1/admin/reserves", async (_request, reply) => {
+    app.post("/api/v1/admin/reserves", async (request, reply) => {
+        requireAdmin(request, deps.adminToken);
         await takeReservesSnapshot({ pool, client }, requireConfig());
         const snapshot = await latestReservesSnapshot(pool);
         if (snapshot === null) throw new NoReservesSnapshot();

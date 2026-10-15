@@ -4,31 +4,45 @@ import assert from "node:assert/strict";
 import { loadEnv } from "@wallet/shared";
 
 import { buildApp, createDeps, type AppDeps } from "../app.ts";
+import { adminHeaders, TEST_ADMIN_TOKEN } from "../test-support/auth.ts";
 import { assertBalanced, creditForTest, resetDatabase } from "../test-support/db.ts";
+
+const PASSWORD = "correct horse battery staple";
 
 describe("ledger API", () => {
     let deps: AppDeps;
     let app: ReturnType<typeof buildApp>;
 
+    /** Each account's sign-in, from signing up. */
+    const tokens = new Map<string, string>();
+    const as = (accountId: string | undefined) => ({ authorization: `Bearer ${tokens.get(accountId ?? "")}` });
+
     const createAccount = async (email: string): Promise<string> => {
         const response = await app.inject({
             method: "POST",
             url: "/api/v1/users",
-            payload: { email },
+            payload: { email, password: PASSWORD },
         });
-        assert.equal(response.statusCode, 201);
+        assert.equal(response.statusCode, 201, response.body);
+        tokens.set(response.json().accountId, response.json().token);
         return response.json().accountId;
     };
 
+    /** Sent as whoever owns the account the money leaves. */
     const money = (url: string, key: string, payload: Record<string, string>) =>
-        app.inject({ method: "POST", url, headers: { "idempotency-key": key }, payload });
+        app.inject({
+            method: "POST",
+            url,
+            headers: { "idempotency-key": key, ...as(payload.fromAccountId ?? payload.accountId) },
+            payload,
+        });
 
     /** Stands in for a deposit the indexer would credit; the API itself cannot create money. */
     const fund = (accountId: string, amount: bigint) =>
         creditForTest(deps.pool, { accountId: BigInt(accountId), amount, idempotencyKey: `fund-${accountId}` });
 
     before(() => {
-        deps = createDeps(loadEnv({ ...process.env, LOG_LEVEL: "error" }));
+        deps = createDeps(loadEnv({ ...process.env, LOG_LEVEL: "error", API_ADMIN_TOKEN: TEST_ADMIN_TOKEN }));
         app = buildApp(deps);
     });
     beforeEach(async () => {
@@ -43,7 +57,7 @@ describe("ledger API", () => {
         const response = await app.inject({
             method: "POST",
             url: "/api/v1/users",
-            payload: { email: "addr@test.local" },
+            payload: { email: "addr@test.local", password: PASSWORD },
         });
         const created = response.json();
 
@@ -54,6 +68,7 @@ describe("ledger API", () => {
         const account = await app.inject({
             method: "GET",
             url: `/api/v1/accounts/${created.accountId}`,
+            headers: { authorization: `Bearer ${created.token}` },
         });
         assert.equal(account.json().depositAddress, created.depositAddress);
     });
@@ -66,6 +81,7 @@ describe("ledger API", () => {
         const response = await app.inject({
             method: "POST",
             url: "/api/v1/transfers",
+            headers: as(alice),
             payload: { fromAccountId: alice, toAccountId: bob, amount: "100" },
         });
 
@@ -86,7 +102,7 @@ describe("ledger API", () => {
         assert.deepEqual(second.json(), first.json());
 
         // The decisive check: the money moved once, not twice.
-        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${bob}` });
+        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${bob}`, headers: as(bob) });
         assert.equal(account.json().balance, "400");
         await assertBalanced(deps.pool);
     });
@@ -121,7 +137,7 @@ describe("ledger API", () => {
         assert.equal(response.statusCode, 422);
         assert.equal(response.json().error, "insufficient_funds");
 
-        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${alice}` });
+        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${alice}`, headers: as(alice) });
         assert.equal(account.json().balance, "500");
     });
 
@@ -138,8 +154,8 @@ describe("ledger API", () => {
         assert.equal(response.statusCode, 201);
 
         const [aliceAccount, bobAccount] = await Promise.all([
-            app.inject({ method: "GET", url: `/api/v1/accounts/${alice}` }),
-            app.inject({ method: "GET", url: `/api/v1/accounts/${bob}` }),
+            app.inject({ method: "GET", url: `/api/v1/accounts/${alice}`, headers: as(alice) }),
+            app.inject({ method: "GET", url: `/api/v1/accounts/${bob}`, headers: as(bob) }),
         ]);
         assert.equal(aliceAccount.json().balance, "750");
         assert.equal(bobAccount.json().balance, "250");
@@ -161,6 +177,7 @@ describe("ledger API", () => {
         const firstPage = await app.inject({
             method: "GET",
             url: `/api/v1/accounts/${accountId}/entries?limit=2`,
+            headers: as(accountId),
         });
         const body = firstPage.json();
 
@@ -170,6 +187,7 @@ describe("ledger API", () => {
         const secondPage = await app.inject({
             method: "GET",
             url: `/api/v1/accounts/${accountId}/entries?limit=2&cursor=${body.nextCursor}`,
+            headers: as(accountId),
         });
         const secondBody = secondPage.json();
 
@@ -198,6 +216,7 @@ describe("ledger API", () => {
         const response = await app.inject({
             method: "GET",
             url: "/api/v1/admin/reconciliation",
+            headers: adminHeaders,
         });
 
         assert.equal(response.statusCode, 200);
@@ -235,7 +254,7 @@ describe("ledger API", () => {
             const response = await money(url, `gone-${url}`, { accountId, amount: "1000" });
             assert.equal(response.statusCode, 404, url);
         }
-        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${accountId}` });
+        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${accountId}`, headers: as(accountId) });
         assert.equal(account.json().balance, "0");
     });
 });

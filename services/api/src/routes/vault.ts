@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { encodeFunctionData, type Address, type Hex, type PublicClient } from "viem";
 
 import type { Pool } from "../db/pool.ts";
+import { requireAdmin } from "../auth/sessions.ts";
 import { vaultAbi } from "../vault/abi.ts";
 import { VaultNotConfigured } from "../vault/errors.ts";
 import {
@@ -65,14 +66,14 @@ function present(proposal: Proposal) {
  *
  * There is deliberately no "submit" endpoint. Submitting costs gas, so it needs
  * a key, and the API server holds none -- a separate worker submits whatever
- * has reached its quorum. Nor do these routes need their own authentication to
- * be safe: a signature is only accepted if it recovers to a vault owner, and
- * the vault checks every one again on chain. Anyone may propose; only owners
- * can approve.
+ * has reached its quorum. Approving needs no sign-in: a signature is only
+ * accepted if it recovers to a vault owner, and the vault checks every one
+ * again on chain. Proposing is the operator's, with the admin token, so the
+ * owners' queue holds nothing a stranger put there.
  */
 export function registerVaultRoutes(
     app: FastifyInstance,
-    deps: { pool: Pool; client: PublicClient; vault: string | undefined },
+    deps: { pool: Pool; client: PublicClient; vault: string | undefined; adminToken: string | undefined },
 ): void {
     const { pool, client } = deps;
 
@@ -82,6 +83,7 @@ export function registerVaultRoutes(
     };
 
     app.post("/api/v1/vault/proposals", async (request, reply) => {
+        requireAdmin(request, deps.adminToken);
         const vault = requireVault();
         const { to, value, data, deadline } = createProposalSchema.parse(request.body);
         const proposal = await createProposal({ pool, client }, { vault, to, value, data, deadline });

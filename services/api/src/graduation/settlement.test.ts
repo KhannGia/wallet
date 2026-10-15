@@ -23,6 +23,7 @@ import {
     type ChainHarness,
     type Signer,
 } from "../test-support/chain.ts";
+import { sessionFor } from "../test-support/auth.ts";
 import { assertBalanced, creditForTest, resetDatabase, seedAccount } from "../test-support/db.ts";
 
 const ONE_ETHER = 10n ** 18n;
@@ -98,7 +99,10 @@ describe("graduation: settlement through the withdrawal worker", () => {
     const fresh = () => privateKeyToAccount(generatePrivateKey());
     const balanceOf = (address: Address) =>
         harness.publicClient.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [address] });
-    const read = async (id: string) => (await app.inject({ method: "GET", url: `/api/v1/graduations/${id}` })).json();
+    /** The signed-in owner behind each graduation, so it can be read back. */
+    const owners = new Map<string, { authorization: string }>();
+    const read = async (id: string) =>
+        (await app.inject({ method: "GET", url: `/api/v1/graduations/${id}`, headers: owners.get(id)! })).json();
     const work = (hotWalletId = "hot") =>
         runWithdrawalWorkerOnce(
             { pool: shared.pool, client: harness.publicClient, wallet: (hotWalletId === "hot" ? hot : broke).walletClient },
@@ -116,9 +120,11 @@ describe("graduation: settlement through the withdrawal worker", () => {
     /** Opened, activated and funded: the whole balance is reserved and queued for the worker. */
     async function funded(balance: bigint, owner = fresh(), accountId?: bigint) {
         accountId ??= await seedAccount(shared.pool, `${generatePrivateKey().slice(2, 12)}@settle.local`, balance);
+        const headers = await sessionFor(shared.pool, accountId);
         const opened = await app.inject({
             method: "POST",
             url: `/api/v1/accounts/${accountId}/graduation`,
+            headers,
             payload: { owner: owner.address },
         });
         assert.equal(opened.statusCode, 201, opened.body);
@@ -126,7 +132,8 @@ describe("graduation: settlement through the withdrawal worker", () => {
         if ((await harness.publicClient.getCode({ address: graduation.smartAccount })) === undefined) {
             await activate(owner);
         }
-        const response = await app.inject({ method: "POST", url: `/api/v1/graduations/${graduation.id}/funding` });
+        owners.set(graduation.id, headers);
+        const response = await app.inject({ method: "POST", url: `/api/v1/graduations/${graduation.id}/funding`, headers });
         assert.equal(response.statusCode, 202, response.body);
         return { accountId, owner, graduation: response.json() };
     }
@@ -197,6 +204,7 @@ describe("graduation: settlement through the withdrawal worker", () => {
         const retry = await app.inject({
             method: "POST",
             url: `/api/v1/accounts/${accountId}/graduation`,
+            headers: owners.get(graduation.id)!,
             payload: { owner: owner.address },
         });
         assert.equal(retry.statusCode, 201, retry.body);

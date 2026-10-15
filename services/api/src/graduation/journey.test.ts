@@ -37,6 +37,7 @@ import {
     type ChainHarness,
     type Signer,
 } from "../test-support/chain.ts";
+import { sessionFor } from "../test-support/auth.ts";
 import { assertBalanced, resetDatabase, seedAccount } from "../test-support/db.ts";
 
 const setupAbi = parseAbi([
@@ -174,9 +175,11 @@ describe("graduation: from custody to an account only the user controls", () => 
         const owner = fresh();
         const guardians = [fresh(), fresh(), fresh()];
 
+        const headers = await sessionFor(shared.pool, accountId);
         const opened = await app.inject({
             method: "POST",
             url: `/api/v1/accounts/${accountId}/graduation`,
+            headers,
             payload: { owner: owner.address },
         });
         assert.equal(opened.statusCode, 201, opened.body);
@@ -208,7 +211,7 @@ describe("graduation: from custody to an account only the user controls", () => 
         assert.equal(receipt.success, true);
         assert.equal(receipt.paymaster?.toLowerCase(), paymaster.toLowerCase());
 
-        const funding = await app.inject({ method: "POST", url: `/api/v1/graduations/${id}/funding` });
+        const funding = await app.inject({ method: "POST", url: `/api/v1/graduations/${id}/funding`, headers });
         assert.equal(funding.statusCode, 202, funding.body);
 
         // The worker sends; the next pass, a block later, settles.
@@ -216,7 +219,7 @@ describe("graduation: from custody to an account only the user controls", () => 
         await new Promise((resolve) => setTimeout(resolve, 3000));
         assert.equal((await work()).confirmed, 1);
 
-        const settled = (await app.inject({ method: "GET", url: `/api/v1/graduations/${id}` })).json();
+        const settled = (await app.inject({ method: "GET", url: `/api/v1/graduations/${id}`, headers })).json();
         assert.equal(settled.status, "COMPLETED");
         return { accountId, owner, guardians, account };
     }

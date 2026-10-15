@@ -10,6 +10,7 @@ import { buildApp, createDeps, type AppDeps } from "../app.ts";
 import { accountFactoryAbi, toWalletSmartAccount } from "../aa/smart-account.ts";
 import { getAccount, transfer } from "../ledger/operations.ts";
 import { chainHarness, deployMockUsdc, loadArtifact, sendEther, type ChainHarness } from "../test-support/chain.ts";
+import { sessionFor } from "../test-support/auth.ts";
 import { assertBalanced, resetDatabase, seedAccount } from "../test-support/db.ts";
 
 const ONE_ETHER = 10n ** 18n;
@@ -48,6 +49,8 @@ describe("graduation: opening, activation and funding", () => {
 
     beforeEach(async () => {
         await resetDatabase(shared.pool);
+        sessions.clear();
+        holders.clear();
     });
 
     after(async () => {
@@ -57,11 +60,33 @@ describe("graduation: opening, activation and funding", () => {
 
     const fresh = () => privateKeyToAccount(generatePrivateKey());
 
-    const open = (accountId: bigint | string, owner: Address) =>
-        app.inject({ method: "POST", url: `/api/v1/accounts/${accountId}/graduation`, payload: { owner } });
-    const fund = (id: string) => app.inject({ method: "POST", url: `/api/v1/graduations/${id}/funding` });
-    const cancel = (id: string) => app.inject({ method: "POST", url: `/api/v1/graduations/${id}/cancellation` });
-    const read = async (id: string) => (await app.inject({ method: "GET", url: `/api/v1/graduations/${id}` })).json();
+    /** Each account's owner signed in, and which account each graduation belongs to. */
+    const sessions = new Map<string, { authorization: string }>();
+    const holders = new Map<string, string>();
+    const as = async (accountId: bigint | string) => {
+        const key = String(accountId);
+        if (!sessions.has(key)) sessions.set(key, await sessionFor(shared.pool, key));
+        return sessions.get(key)!;
+    };
+    const ofGraduation = (id: string) => as(holders.get(id)!);
+
+    /** Opens as the account's owner -- or, for an account nobody owns, as `signedInAs`. */
+    const open = async (accountId: bigint | string, owner: Address, signedInAs: bigint | string = accountId) => {
+        const response = await app.inject({
+            method: "POST",
+            url: `/api/v1/accounts/${accountId}/graduation`,
+            headers: await as(signedInAs),
+            payload: { owner },
+        });
+        if (response.statusCode < 300) holders.set(response.json().id, String(accountId));
+        return response;
+    };
+    const fund = async (id: string) =>
+        app.inject({ method: "POST", url: `/api/v1/graduations/${id}/funding`, headers: await ofGraduation(id) });
+    const cancel = async (id: string) =>
+        app.inject({ method: "POST", url: `/api/v1/graduations/${id}/cancellation`, headers: await ofGraduation(id) });
+    const read = async (id: string) =>
+        (await app.inject({ method: "GET", url: `/api/v1/graduations/${id}`, headers: await ofGraduation(id) })).json();
 
     /** What the user's wallet does between opening and funding: deploy the account with its own key. */
     async function activate(owner: PrivateKeyAccount) {
@@ -132,9 +157,9 @@ describe("graduation: opening, activation and funding", () => {
         assert.equal(response.statusCode, 422, response.body);
         assert.equal(response.json().error, "nothing_to_graduate");
 
-        // Account 1 is BANK_GATEWAY, seeded by resetDatabase.
-        assert.equal((await open(1n, fresh().address)).statusCode, 404);
-        assert.equal((await open(999_999n, fresh().address)).statusCode, 404);
+        // Account 1 is BANK_GATEWAY, seeded by resetDatabase; asked as a real user.
+        assert.equal((await open(1n, fresh().address, empty)).statusCode, 404);
+        assert.equal((await open(999_999n, fresh().address, empty)).statusCode, 404);
 
         const funded = await seedAccount(shared.pool, "zero@graduation.local", 1n);
         assert.equal((await open(funded, "0x0000000000000000000000000000000000000000")).statusCode, 400);
@@ -291,7 +316,35 @@ describe("graduation: opening, activation and funding", () => {
         await assertBalanced(shared.pool);
     });
 
+    it("lets nobody but the account's owner open, see, fund or cancel its graduation", async () => {
+        const { accountId, owner, graduation } = await opened(5_000_000n);
+        await activate(owner);
+        const stranger = await as(await seedAccount(shared.pool, "stranger@graduation.local", 1n));
+
+        const tries = [
+            app.inject({
+                method: "POST",
+                url: `/api/v1/accounts/${accountId}/graduation`,
+                headers: stranger,
+                payload: { owner: fresh().address },
+            }),
+            app.inject({ method: "GET", url: `/api/v1/graduations/${graduation.id}`, headers: stranger }),
+            app.inject({ method: "POST", url: `/api/v1/graduations/${graduation.id}/funding`, headers: stranger }),
+            app.inject({ method: "POST", url: `/api/v1/graduations/${graduation.id}/cancellation`, headers: stranger }),
+        ];
+        for (const response of await Promise.all(tries)) assert.equal(response.statusCode, 404, response.body);
+        assert.equal(
+            (await app.inject({ method: "GET", url: `/api/v1/graduations/${graduation.id}` })).statusCode,
+            401,
+        );
+
+        assert.equal((await read(graduation.id)).status, "AWAITING_ACTIVATION");
+        assert.deepEqual(await reservations(accountId), []);
+    });
+
     it("answers 404 for an unknown graduation, and 503 when the factory is not configured", async () => {
+        const someone = await seedAccount(shared.pool, "someone@graduation.local", 0n);
+        holders.set("999999", String(someone));
         assert.equal((await read("999999")).error, "graduation_not_found");
 
         const unconfigured = buildApp({ ...shared, env: { ...shared.env, ACCOUNT_FACTORY_ADDRESS: undefined } });

@@ -5,6 +5,7 @@ import { loadEnv, localChain, type Env } from "@wallet/shared";
 import { createWalletClient, http, type Address, type Hex, type PrivateKeyAccount } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
+import { adminHeaders, TEST_ADMIN_TOKEN } from "../test-support/auth.ts";
 import { buildApp, createDeps, type AppDeps } from "../app.ts";
 import {
     advanceChainTime,
@@ -35,7 +36,7 @@ describe("vault timelock in the backend", () => {
     let hot: Address;
 
     before(() => {
-        env = loadEnv({ ...process.env, LOG_LEVEL: "error" });
+        env = loadEnv({ ...process.env, LOG_LEVEL: "error", API_ADMIN_TOKEN: TEST_ADMIN_TOKEN });
         shared = createDeps(env);
         harness = chainHarness(env.RPC_URL);
         submitter = anvilSigner(env.RPC_URL, 3);
@@ -86,6 +87,7 @@ describe("vault timelock in the backend", () => {
         const created = await app!.inject({
             method: "POST",
             url: "/api/v1/vault/proposals",
+            headers: adminHeaders,
             payload: { to, value: value.toString(), deadline: (now + 7200n).toString() },
         });
         assert.equal(created.statusCode, 201);
