@@ -18,6 +18,7 @@ import {
     type ChainHarness,
     type Signer,
 } from "../test-support/chain.ts";
+import { adminHeaders, sessionFor, TEST_ADMIN_TOKEN } from "../test-support/auth.ts";
 import { assertBalanced, resetDatabase, TEST_XPUB } from "../test-support/db.ts";
 import { computeReserves, takeReservesSnapshot, type ReservesReport } from "./reserves.ts";
 
@@ -284,16 +285,20 @@ describe("proof of reserves: what the platform holds against what it owes", () =
         await mintTo(harness, token, alice.address, 5_000_000n);
         await index(1n);
 
-        const app = buildApp({ ...shared, env: { ...shared.env, USDC_ADDRESS: token, VAULT_ADDRESS: VAULT } });
+        const app = buildApp({
+            ...shared,
+            env: { ...shared.env, USDC_ADDRESS: token, VAULT_ADDRESS: VAULT, API_ADMIN_TOKEN: TEST_ADMIN_TOKEN },
+        });
         try {
-            assert.equal((await app.inject({ method: "GET", url: "/api/v1/admin/reserves" })).statusCode, 404);
+            assert.equal((await app.inject({ method: "POST", url: "/api/v1/admin/reserves" })).statusCode, 401);
+            assert.equal((await app.inject({ method: "GET", url: "/api/v1/admin/reserves", headers: adminHeaders })).statusCode, 404);
 
-            const taken = await app.inject({ method: "POST", url: "/api/v1/admin/reserves" });
+            const taken = await app.inject({ method: "POST", url: "/api/v1/admin/reserves", headers: adminHeaders });
             assert.equal(taken.statusCode, 201, taken.body);
             assert.equal(taken.json().assets, "5000000");
             assert.equal(taken.json().liabilities, "5000000");
             assert.equal(taken.json().solvent, true);
-            assert.equal((await app.inject({ method: "GET", url: "/api/v1/admin/reserves" })).statusCode, 200);
+            assert.equal((await app.inject({ method: "GET", url: "/api/v1/admin/reserves", headers: adminHeaders })).statusCode, 200);
 
             // Each account's share is recorded, and they add up.
             const { rows } = await shared.pool.query<{ total: string }>(
@@ -305,16 +310,20 @@ describe("proof of reserves: what the platform holds against what it owes", () =
             // Tokens leave the deposit address with no ledger entry.
             await move(alice.signer, OUTSIDE, 1n);
             await index(1n);
-            const short = await app.inject({ method: "POST", url: "/api/v1/admin/reserves" });
+            const short = await app.inject({ method: "POST", url: "/api/v1/admin/reserves", headers: adminHeaders });
             assert.equal(short.statusCode, 500, short.body);
             assert.equal(short.json().surplus, "-1");
-            assert.equal((await app.inject({ method: "GET", url: "/api/v1/admin/reserves" })).statusCode, 500);
+            assert.equal((await app.inject({ method: "GET", url: "/api/v1/admin/reserves", headers: adminHeaders })).statusCode, 500);
         } finally {
             await app.close();
         }
 
-        const unconfigured = buildApp({ ...shared, env: { ...shared.env, USDC_ADDRESS: undefined } });
-        assert.equal((await unconfigured.inject({ method: "GET", url: "/api/v1/admin/reserves" })).statusCode, 503);
+        const unconfigured = buildApp({
+            ...shared,
+            env: { ...shared.env, USDC_ADDRESS: undefined, API_ADMIN_TOKEN: TEST_ADMIN_TOKEN },
+        });
+        const response = await unconfigured.inject({ method: "GET", url: "/api/v1/admin/reserves", headers: adminHeaders });
+        assert.equal(response.json().error, "reserves_not_configured");
         await unconfigured.close();
     });
 
@@ -347,8 +356,12 @@ describe("proof of reserves: what the platform holds against what it owes", () =
             app = buildApp({ ...shared, env: { ...shared.env, USDC_ADDRESS: token, VAULT_ADDRESS: VAULT } });
         });
         const close = () => app.close();
-        const proofOf = (id: unknown, accountId: unknown) =>
-            app.inject({ method: "GET", url: `/api/v1/reserves/${id}/proof/${accountId}` });
+        const proofOf = async (id: unknown, accountId: bigint, as: bigint = accountId) =>
+            app.inject({
+                method: "GET",
+                url: `/api/v1/reserves/${id}/proof/${accountId}`,
+                headers: await sessionFor(shared.pool, as),
+            });
 
         it("proves every user's share into the root, whose sum is the liabilities", async () => {
             try {
@@ -418,6 +431,8 @@ describe("proof of reserves: what the platform holds against what it owes", () =
                 const late = await user("late@reserves.local");
                 assert.equal((await proofOf(snapshot.id, late.accountId)).json().error, "not_in_snapshot");
                 assert.equal((await proofOf("abc", alice.accountId)).statusCode, 400);
+                // A proof carries its salt, so it is its owner's alone.
+                assert.equal((await proofOf(snapshot.id, alice.accountId, late.accountId)).json().error, "account_not_found");
 
                 // A snapshot from before snapshots had a tree.
                 const { rows } = await shared.pool.query<{ id: bigint }>(

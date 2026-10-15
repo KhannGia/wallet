@@ -30,7 +30,7 @@ export interface CreatedUser {
 
 export async function createUser(
     pool: Pool,
-    params: { email: string; xpub: string },
+    params: { email: string; xpub: string; passwordHash?: string },
 ): Promise<CreatedUser> {
     const client = await pool.connect();
     try {
@@ -39,8 +39,8 @@ export async function createUser(
         const user = one(
             (
                 await client.query<{ id: bigint }>(
-                    "INSERT INTO users (email) VALUES ($1) RETURNING id",
-                    [params.email],
+                    "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id",
+                    [params.email, params.passwordHash ?? null],
                 )
             ).rows,
             "user",

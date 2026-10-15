@@ -5,6 +5,7 @@ import { loadEnv, type Env } from "@wallet/shared";
 import { hashTypedData, type Address, type Hex, type PrivateKeyAccount } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
+import { adminHeaders, TEST_ADMIN_TOKEN } from "../test-support/auth.ts";
 import { buildApp, createDeps, type AppDeps } from "../app.ts";
 import {
     anvilSigner,
@@ -60,7 +61,7 @@ describe("vault API", () => {
     let app: ReturnType<typeof buildApp> | undefined;
 
     before(() => {
-        env = loadEnv({ ...process.env, LOG_LEVEL: "error" });
+        env = loadEnv({ ...process.env, LOG_LEVEL: "error", API_ADMIN_TOKEN: TEST_ADMIN_TOKEN });
         shared = createDeps(env);
         harness = chainHarness(env.RPC_URL);
         submitter = anvilSigner(env.RPC_URL, 5);
@@ -92,7 +93,7 @@ describe("vault API", () => {
         ((await harness.publicClient.getBlock()).timestamp + seconds).toString();
 
     const propose = async (payload: Record<string, unknown>) =>
-        app!.inject({ method: "POST", url: "/api/v1/vault/proposals", payload });
+        app!.inject({ method: "POST", url: "/api/v1/vault/proposals", headers: adminHeaders, payload });
 
     const sign = (id: string, signature: Hex) =>
         app!.inject({
@@ -278,12 +279,21 @@ describe("vault API", () => {
         assert.equal(badId.statusCode, 400);
     });
 
+    it("takes proposals only from the operator", async () => {
+        const payload = { to: freshRecipient(), value: "1", deadline: await deadlineIn(3600n) };
+        const anonymous = await app!.inject({ method: "POST", url: "/api/v1/vault/proposals", payload });
+        assert.equal(anonymous.statusCode, 401);
+        assert.equal(anonymous.json().error, "not_admin");
+        assert.equal((await propose(payload)).statusCode, 201);
+    });
+
     it("answers 503 when no vault is configured", async () => {
         const unconfigured = buildApp({ ...deps, env: { ...env, VAULT_ADDRESS: undefined } });
         try {
             const response = await unconfigured.inject({
                 method: "POST",
                 url: "/api/v1/vault/proposals",
+                headers: adminHeaders,
                 payload: { to: freshRecipient(), value: "1", deadline: await deadlineIn(3600n) },
             });
             assert.equal(response.statusCode, 503);

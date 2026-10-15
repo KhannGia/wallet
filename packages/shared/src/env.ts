@@ -26,6 +26,14 @@ const envSchema = z.object({
   WALLET_XPUB: z.string().min(1),
   CHAIN_ID: z.coerce.number().int().positive().default(31337),
   PORT: z.coerce.number().int().positive().default(3000),
+
+  /**
+   * The operator's bearer token for the admin endpoints -- reconciliation,
+   * reserves snapshots, vault proposals. Unset, they answer 503.
+   */
+  API_ADMIN_TOKEN: z.string().min(32, "API_ADMIN_TOKEN must be at least 32 characters").optional(),
+  /** How long a user's sign-in lasts. */
+  AUTH_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 

@@ -1,6 +1,8 @@
 import { getAddress, isAddress } from "viem";
 import { z } from "zod";
 
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "../auth/passwords.ts";
+
 /**
  * Amounts arrive as decimal strings, never JSON numbers: a JSON number is an
  * IEEE-754 double and loses precision above 2^53, which would corrupt a
@@ -16,8 +18,19 @@ export const accountIdSchema = z
     .regex(/^[1-9][0-9]*$/, "account id must be a positive integer")
     .transform((value) => BigInt(value));
 
+/** Lower-cased, so one address cannot hold two accounts by changing case. */
+const emailSchema = z.string().email().max(254).transform((email) => email.toLowerCase());
+
 export const createUserSchema = z.object({
-    email: z.string().email(),
+    email: emailSchema,
+    password: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+
+export const signInSchema = z.object({
+    email: emailSchema,
+    // No minimum here: a sign-in only has to match, and saying "too short"
+    // would tell a guesser something.
+    password: z.string().max(MAX_PASSWORD_LENGTH),
 });
 
 export const transferSchema = z.object({
