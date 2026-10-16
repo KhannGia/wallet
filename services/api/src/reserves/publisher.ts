@@ -1,20 +1,10 @@
-import { EMPTY_NODE } from "@wallet/shared";
-import { parseAbi, parseEventLogs, type Address, type Hash, type PublicClient, type WalletClient } from "viem";
+import { EMPTY_NODE, reservesRegistryAbi } from "@wallet/shared";
+import { parseEventLogs, type Address, type Hash, type PublicClient, type WalletClient } from "viem";
 
 import type { Pool } from "../db/pool.ts";
 import { takeReservesSnapshot, type ReservesConfig } from "./reserves.ts";
 
-/** The parts of ReservesRegistry the backend calls, declared by hand like every other contract's. */
-export const reservesRegistryAbi = parseAbi([
-    "struct Attestation { bytes32 root; uint256 liabilities; uint256 assets; uint64 blockNumber; uint64 publishedAt; }",
-    "function publish(bytes32 root, uint256 liabilities, uint256 assets, uint64 blockNumber) returns (uint256 id)",
-    "function publisher() view returns (address)",
-    "function token() view returns (address)",
-    "function count() view returns (uint256)",
-    "function latest() view returns (uint256 id, Attestation attestation)",
-    "function findByRoot(bytes32 root) view returns (uint256 id, Attestation attestation)",
-    "event Published(uint256 indexed id, bytes32 indexed root, uint256 liabilities, uint256 assets, uint64 blockNumber)",
-]);
+export { reservesRegistryAbi };
 
 export interface PublisherDeps {
     pool: Pool;

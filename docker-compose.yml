@@ -68,6 +68,7 @@ x-node-common: &node-common
     - node_modules_root:/app/node_modules
     - node_modules_api:/app/services/api/node_modules
     - node_modules_shared:/app/packages/shared/node_modules
+    - node_modules_web:/app/web/node_modules
     # Compiled contract artifacts, read-only. The backend needs the ABI to
     # decode logs, and forge is the only thing that should ever write here.
     - forge_out:/app/contracts/out:ro
@@ -272,6 +273,68 @@ services:
       anvil:
         condition: service_healthy
 
+  # --- The demo stack: the frontend and every worker as a service. -----------
+  # Only `./wallet demo up` starts these, in a Compose project of its own with
+  # the keys and addresses its bootstrap generated (see docker/demo.env).
+
+  web:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run dev --workspace @wallet/web
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5173/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+
+  indexer:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run indexer --workspace @wallet/api
+    restart: unless-stopped
+
+  withdrawer:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run withdrawer --workspace @wallet/api
+    restart: unless-stopped
+
+  sweeper:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run sweeper --workspace @wallet/api
+    restart: unless-stopped
+
+  vault-submitter:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run vault-submitter --workspace @wallet/api
+    restart: unless-stopped
+
+  paymaster:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run paymaster --workspace @wallet/api
+    restart: unless-stopped
+
+  recovery-relayer:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run recovery-relayer --workspace @wallet/api
+    restart: unless-stopped
+
+  reserves:
+    <<: *node-common
+    profiles: ["demo"]
+    command: npm run reserves --workspace @wallet/api
+    restart: unless-stopped
+
   # One-shot helper containers. Not started by `up`; invoked via the Makefile.
   node-tools:
     <<: *node-common
@@ -303,6 +366,7 @@ volumes:
   node_modules_root:
   node_modules_api:
   node_modules_shared:
+  node_modules_web:
   forge_lib:
   forge_out:
   forge_cache:

@@ -279,6 +279,31 @@ describe("vault API", () => {
         assert.equal(badId.statusCode, 400);
     });
 
+    it("lists proposals newest first, with how many owners have signed", async () => {
+        // One proposal per vault nonce at a time: the first is approved and
+        // executed before the next can open.
+        const first = (await propose({ to: freshRecipient(), value: "1", deadline: await deadlineIn(3600n) })).json();
+        for (const owner of owners.slice(0, 3)) {
+            assert.equal((await sign(first.id, await signJson(owner, first.typedData))).statusCode, 201);
+        }
+        await submit();
+        const secondResponse = await propose({ to: freshRecipient(), value: "2", deadline: await deadlineIn(3600n) });
+        assert.equal(secondResponse.statusCode, 201, secondResponse.body);
+        const second = secondResponse.json();
+        assert.equal((await sign(second.id, await signJson(owners[0]!, second.typedData))).statusCode, 201);
+
+        const list = await app!.inject({ method: "GET", url: "/api/v1/vault/proposals?limit=10" });
+        assert.equal(list.statusCode, 200, list.body);
+        assert.deepEqual(
+            list.json().map((p: { id: string; collected: number; status: string }) => [p.id, p.collected, p.status]),
+            [
+                [second.id, 1, "COLLECTING"],
+                [first.id, 3, "EXECUTED"],
+            ],
+        );
+        assert.equal((await app!.inject({ method: "GET", url: "/api/v1/vault/proposals?limit=0" })).statusCode, 400);
+    });
+
     it("takes proposals only from the operator", async () => {
         const payload = { to: freshRecipient(), value: "1", deadline: await deadlineIn(3600n) };
         const anonymous = await app!.inject({ method: "POST", url: "/api/v1/vault/proposals", payload });

@@ -316,6 +316,27 @@ describe("graduation: opening, activation and funding", () => {
         await assertBalanced(shared.pool);
     });
 
+    it("lists an account's graduations, newest first, to its owner alone", async () => {
+        const { accountId, graduation } = await opened(5_000_000n);
+        assert.equal((await cancel(graduation.id)).statusCode, 200);
+        const second = await open(accountId, fresh().address);
+        assert.equal(second.statusCode, 201);
+
+        const list = await app.inject({ method: "GET", url: `/api/v1/accounts/${accountId}/graduations`, headers: await as(accountId) });
+        assert.equal(list.statusCode, 200, list.body);
+        assert.deepEqual(
+            list.json().map((g: { id: string; status: string }) => [g.id, g.status]),
+            [
+                [second.json().id, "AWAITING_ACTIVATION"],
+                [graduation.id, "CANCELLED"],
+            ],
+        );
+
+        const stranger = await as(await seedAccount(shared.pool, "lister@graduation.local", 0n));
+        const peek = await app.inject({ method: "GET", url: `/api/v1/accounts/${accountId}/graduations`, headers: stranger });
+        assert.equal(peek.statusCode, 404);
+    });
+
     it("lets nobody but the account's owner open, see, fund or cancel its graduation", async () => {
         const { accountId, owner, graduation } = await opened(5_000_000n);
         await activate(owner);

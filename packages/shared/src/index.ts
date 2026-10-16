@@ -28,3 +28,12 @@ export {
     type SumTree,
     type VerifyResult,
 } from "./merkle-sum.ts";
+export {
+    accountFactoryAbi,
+    encodeSessionCall,
+    EXECUTE_USER_OP_SELECTOR,
+    smartAccountAbi,
+    toSessionAccount,
+    toWalletSmartAccount,
+} from "./smart-account.ts";
+export { reservesRegistryAbi, verifyAgainstRegistry, type Verdict } from "./reserves-verify.ts";

@@ -8,11 +8,12 @@
   },
   "workspaces": [
     "packages/*",
-    "services/*"
+    "services/*",
+    "web"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 \"packages/*/src/**/*.test.ts\" \"services/*/src/**/*.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

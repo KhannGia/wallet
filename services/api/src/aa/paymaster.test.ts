@@ -61,6 +61,12 @@ describe("sponsorship policy", () => {
         "function setGuardians(address[] guardians, uint256 threshold)",
         "function transferOwnership(address newOwner)",
         "function cancelRecovery()",
+        "function executeRecovery(address account)",
+        "struct Condition { uint8 param; uint8 operator; bytes32 value; }",
+        "struct Permission { address target; bytes4 selector; Condition[] conditions; }",
+        "struct SpendLimit { address token; uint256 limit; }",
+        "function addSession(address key, uint48 validAfter, uint48 validUntil, uint256 nativeLimit, Permission[] permissions, SpendLimit[] limits)",
+        "function revokeSession(address key)",
     ]);
     const adopt = (module: Address) =>
         encodeFunctionData({ abi: setupAbi, functionName: "setRecoveryModule", args: [module] });
@@ -116,7 +122,7 @@ describe("sponsorship policy", () => {
             "another module call": execute(
                 MODULE,
                 0n,
-                encodeFunctionData({ abi: setupAbi, functionName: "cancelRecovery" }),
+                encodeFunctionData({ abi: setupAbi, functionName: "executeRecovery", args: [ACCOUNT] }),
             ),
             "not a module call": execute(MODULE, 0n, "0xdeadbeef"),
             "adoption sent to the module": execute(MODULE, 0n, adopt(MODULE)),
@@ -146,6 +152,62 @@ describe("sponsorship policy", () => {
             checkCalls(encodeSessionCall({ to: TOKEN, data: transferData(someone, 1n) }), withModule).allowed,
             true,
         );
+    });
+
+    /** A session allowed to transfer the token, up to `rules` permissions. */
+    const grant = (rules: number, conditions = 0) =>
+        encodeFunctionData({
+            abi: setupAbi,
+            functionName: "addSession",
+            args: [
+                someone,
+                0,
+                2 ** 40,
+                0n,
+                Array.from({ length: rules }, () => ({
+                    target: TOKEN,
+                    selector: "0xa9059cbb" as Hex,
+                    conditions: Array.from({ length: conditions }, () => ({ param: 0, operator: 0, value: pad("0x01") })),
+                })),
+                [{ token: TOKEN, limit: 100n }],
+            ],
+        });
+    const revoke = encodeFunctionData({ abi: setupAbi, functionName: "revokeSession", args: [someone] });
+    const veto = encodeFunctionData({ abi: setupAbi, functionName: "cancelRecovery" });
+
+    it("sponsors the owner granting and revoking session keys, and vetoing a recovery", () => {
+        assert.deepEqual(checkCalls(execute(ACCOUNT, 0n, grant(1)), tokenOnly), { allowed: true });
+        assert.deepEqual(checkCalls(execute(ACCOUNT, 0n, grant(10, 10)), tokenOnly), { allowed: true });
+        assert.deepEqual(checkCalls(execute(ACCOUNT, 0n, revoke), tokenOnly), { allowed: true });
+        assert.deepEqual(checkCalls(execute(MODULE, 0n, veto), withModule), { allowed: true });
+    });
+
+    it("refuses administration that is not exactly that", () => {
+        const cases: [string, Hex, typeof withModule | typeof tokenOnly][] = [
+            ["a session on another account", execute(someone, 0n, grant(1)), withModule],
+            ["too many permissions", execute(ACCOUNT, 0n, grant(11)), withModule],
+            ["too many conditions", execute(ACCOUNT, 0n, grant(1, 11)), withModule],
+            ["trailing bytes on a grant", execute(ACCOUNT, 0n, concat([grant(1), "0x00"])), withModule],
+            ["trailing bytes on a revocation", execute(ACCOUNT, 0n, concat([revoke, "0x00"])), withModule],
+            ["trailing bytes on a veto", execute(MODULE, 0n, concat([veto, "0x00"])), withModule],
+            ["a veto with no module configured", execute(MODULE, 0n, veto), tokenOnly],
+            ["ether with a grant", execute(ACCOUNT, 1n, grant(1)), withModule],
+            // Only the owner looks after the account; a session key never does.
+            ["a grant through a session key", encodeSessionCall({ to: ACCOUNT, data: grant(1) }), withModule],
+            ["a revocation through a session key", encodeSessionCall({ to: ACCOUNT, data: revoke }), withModule],
+            ["a veto through a session key", encodeSessionCall({ to: MODULE, data: veto }), withModule],
+        ];
+        for (const [name, callData, context] of cases) {
+            assert.equal(checkCalls(callData, context).allowed, false, `${name} must not be sponsored`);
+        }
+
+        // Many more limits than any session needs.
+        const tooManyLimits = encodeFunctionData({
+            abi: setupAbi,
+            functionName: "addSession",
+            args: [someone, 0, 2 ** 40, 0n, [], Array.from({ length: 11 }, () => ({ token: TOKEN, limit: 1n }))],
+        });
+        assert.equal(checkCalls(execute(ACCOUNT, 0n, tooManyLimits), withModule).allowed, false);
     });
 
     it("refuses everything else", () => {

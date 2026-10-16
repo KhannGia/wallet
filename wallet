@@ -93,6 +93,46 @@ run_backend_tests() {
     node_tools "node --test --test-concurrency=1 $(tr '\n' ' ' <<<"$files")"
 }
 
+# The demo stack: the whole platform -- API, frontend, every worker -- in a
+# Compose project of its own, on its own ports (docker/demo.env), so it never
+# touches the development stack's chain or database. Its keys and contract
+# addresses are generated fresh by the bootstrap on every `demo up`, into
+# .env.demo, which git ignores.
+DEMO=(docker compose -p wallet-demo --env-file docker/demo.env)
+DEMO_SERVICES="api web indexer withdrawer sweeper vault-submitter paymaster recovery-relayer reserves"
+
+# Playwright's own image, with the browsers it was built against, pinned like
+# every other image here. Its version must match @playwright/test in web/.
+PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf"
+
+# The frontend's end-to-end tests, against the running demo stack, from inside
+# its network so they reach the services by name.
+run_e2e() {
+    docker run --rm --network wallet-demo_default \
+        --user "${E2E_USER:-$(id -u):$(id -g)}" -e HOME=/tmp -e CI="${CI:-}" \
+        -v "$PWD:/app" \
+        -v wallet-demo_node_modules_root:/app/node_modules \
+        -v wallet-demo_node_modules_web:/app/web/node_modules \
+        -w /app/web "$PLAYWRIGHT_IMAGE" npx playwright test "$@"
+}
+
+demo_up() {
+    # A fresh devnet each time: anvil keeps nothing, so the database must not
+    # either, or it would point at contracts that no longer exist.
+    "${DEMO[@]}" --profile demo down --remove-orphans
+    docker volume rm -f wallet-demo_pgdata >/dev/null
+    "${DEMO[@]}" up -d --wait postgres anvil
+    "${DEMO[@]}" run --rm --no-deps node-tools "npm install"
+    "${DEMO[@]}" run --rm --no-deps forge "$FORGE_DEPS
+        forge build"
+    "${DEMO[@]}" up -d --wait entrypoint-setup bundler
+    "${DEMO[@]}" run --rm node-tools "npm run migrate --workspace @wallet/api"
+    "${DEMO[@]}" run --rm node-tools "node services/api/src/demo/bootstrap-cli.ts"
+    # shellcheck disable=SC2086
+    "${DEMO[@]}" --env-file .env.demo --profile demo up -d --wait $DEMO_SERVICES
+    echo "demo running: http://localhost:$(sed -n 's/^WEB_PORT=//p' docker/demo.env)"
+}
+
 # Brings up the backing services and waits until they report healthy.
 need_services() { "${DC[@]}" up -d --wait postgres anvil; }
 
@@ -136,6 +176,13 @@ Indexer
 
 Vault
   vault-submitter Submit vault proposals that have reached their quorum
+
+Demo
+  demo up         Run the whole platform with the frontend, on its own devnet
+                  and ports, every contract deployed and every worker started
+  demo down       Stop it
+  demo logs [svc] Follow its logs
+  e2e [args]      Run the frontend's end-to-end tests against the demo stack
 
 Proof of reserves
   deploy-reserves Deploy the registry attestations are published to (local only)
@@ -209,6 +256,18 @@ case "${1:-help}" in
     deploy-aa)
         "${DC[@]}" up -d --wait bundler
         "${DC[@]}" run --rm -e PAYMASTER_SIGNER_PRIVATE_KEY forge "sh script/deploy-aa.sh"
+        ;;
+    demo)
+        case "${2:-}" in
+            up) demo_up ;;
+            down) "${DEMO[@]}" --profile demo down --remove-orphans ;;
+            logs) "${DEMO[@]}" --env-file .env.demo --profile demo logs -f ${3:-} ;;
+            *) echo "Usage: ./wallet demo up|down|logs [service]" >&2; exit 1 ;;
+        esac
+        ;;
+    e2e)
+        shift
+        run_e2e "$@"
         ;;
     deploy-reserves)
         need_services
@@ -299,7 +358,7 @@ case "${1:-help}" in
         "${DC[@]}" down
         docker volume rm -f \
             wallet_node_modules_root wallet_node_modules_api \
-            wallet_node_modules_shared wallet_forge_lib \
+            wallet_node_modules_shared wallet_node_modules_web wallet_forge_lib \
             wallet_forge_out wallet_forge_cache
         ;;
     nuke)

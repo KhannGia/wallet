@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { deriveDepositAddress } from "@wallet/shared";
 
 import { one } from "../db/pool.ts";
-import { AccountNotFound } from "./errors.ts";
+import { AccountNotFound, SameAccountTransfer } from "./errors.ts";
 import { pendingBalance } from "./deposits.ts";
 import { reservedBalance } from "./withdrawals.ts";
 import { runIdempotent, type IdempotentOutcome } from "./idempotency.ts";
@@ -99,7 +99,17 @@ export async function transfer(
         amount: String(params.amount),
     };
 
+    // Transfers are between users. A system account is the other side of
+    // deposits and payouts; paying into one would take money out of a user's
+    // balance into the platform's books with nothing on chain to show for it.
+    if (params.fromAccountId === params.toAccountId) throw new SameAccountTransfer();
+
     return runIdempotent(pool, { key: params.idempotencyKey, kind: "TRANSFER", body }, async (client, txId) => {
+        const { rows } = await client.query("SELECT 1 FROM accounts WHERE id = $1 AND type = 'USER'", [
+            params.toAccountId,
+        ]);
+        if (rows.length === 0) throw new AccountNotFound(params.toAccountId);
+
         const entries = await postEntries(client, txId, [
             { accountId: params.fromAccountId, amount: -params.amount },
             { accountId: params.toAccountId, amount: params.amount },
@@ -162,7 +172,15 @@ export async function getAccount(
 }
 
 export interface EntryPage {
-    entries: { id: string; transactionId: string; amount: string; balanceAfter: string; createdAt: string }[];
+    entries: {
+        id: string;
+        transactionId: string;
+        /** What moved the money: a deposit, a transfer, a payout, a graduation, or a reversal of one. */
+        kind: string;
+        amount: string;
+        balanceAfter: string;
+        createdAt: string;
+    }[];
     nextCursor: string | null;
 }
 
@@ -182,11 +200,17 @@ export async function listEntries(
         amount: bigint;
         balance_after: bigint;
         created_at: Date;
+        kind: string;
     }>(
-        `SELECT id, transaction_id, amount, balance_after, created_at
-           FROM ledger_entries
-          WHERE account_id = $1 AND ($2::BIGINT IS NULL OR id < $2)
-          ORDER BY id DESC
+        // A reservation for an on-chain withdrawal is named by the
+        // withdrawal's own kind, so a payout and a graduation read differently.
+        `SELECT e.id, e.transaction_id, e.amount, e.balance_after, e.created_at,
+                COALESCE(w.kind::TEXT, t.kind::TEXT) AS kind
+           FROM ledger_entries e
+           JOIN transactions t ON t.id = e.transaction_id
+           LEFT JOIN chain_withdrawals w ON w.reserved_transaction_id = e.transaction_id
+          WHERE e.account_id = $1 AND ($2::BIGINT IS NULL OR e.id < $2)
+          ORDER BY e.id DESC
           LIMIT $3`,
         [accountId, options.cursor ?? null, options.limit + 1],
     );
@@ -198,6 +222,7 @@ export async function listEntries(
         entries: page.map((row) => ({
             id: String(row.id),
             transactionId: String(row.transaction_id),
+            kind: row.kind,
             amount: String(row.amount),
             balanceAfter: String(row.balance_after),
             createdAt: row.created_at.toISOString(),

@@ -10,6 +10,7 @@ import {
     fundGraduation,
     getGraduation,
     GRADUATION_SALT,
+    listGraduations,
     openGraduation,
     type Graduation,
     type GraduationConfig,
@@ -77,6 +78,13 @@ export function registerGraduationRoutes(
         const { owner } = openSchema.parse(request.body);
         const { graduation, created } = await openGraduation({ pool, client }, config, { accountId, owner });
         return reply.code(created ? 201 : 200).send(present(graduation, config.factory));
+    });
+
+    app.get("/api/v1/accounts/:id/graduations", async (request) => {
+        const config = requireConfig();
+        const accountId = accountIdSchema.parse((request.params as { id: string }).id);
+        await requireAccountOwner(pool, request, accountId);
+        return (await listGraduations(pool, accountId)).map((graduation) => present(graduation, config.factory));
     });
 
     app.get("/api/v1/graduations/:id", async (request) => {
