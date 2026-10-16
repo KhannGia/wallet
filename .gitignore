@@ -25,6 +25,11 @@ contracts/broadcast/
 .vscode/*
 !.vscode/extensions.json
 
+# The frontend's build output and Playwright's reports.
+web/dist/
+web/test-results/
+web/playwright-report/
+
 # Local scratch
 *.log
 tmp/

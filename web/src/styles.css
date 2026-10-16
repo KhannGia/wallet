@@ -1,0 +1,935 @@
+/*
+ * Ledger & Key. The look of a bank's ledger book: ruled paper, a red margin
+ * line, ink, and figures set in a monospaced face so columns of money align.
+ * One accent -- vermilion, the colour of the margin rule and of the dial's
+ * needle -- and nothing else competing with it. Local fonts only: the page
+ * loads no third-party code, fonts included.
+ */
+
+:root {
+    --paper: #f3eee3;
+    --paper-deep: #e9e2d3;
+    --rule: rgba(46, 74, 104, 0.09);
+    --ink: #1b1a17;
+    --ink-soft: #5d574c;
+    --ink-faint: #8f877a;
+    --margin: #d2402b;
+    --accent: #d2402b;
+    --credit: #2f5d50;
+    --card: #fbf8f1;
+    --line: #d9d0be;
+
+    --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", Georgia, serif;
+    --text: "Charter", "Bitstream Charter", "Sitka Text", Cambria, "Noto Serif", Georgia, serif;
+    --figures: "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+
+    --radius: 3px;
+    color-scheme: light;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+}
+
+body {
+    font-family: var(--text);
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--ink);
+    background-color: var(--paper);
+    /* Ruled lines, and the ledger's red margin a little way in from the left. */
+    background-image:
+        linear-gradient(90deg, transparent 0, transparent 54px, var(--margin) 54px, var(--margin) 55px, transparent 55px),
+        repeating-linear-gradient(180deg, transparent 0, transparent 31px, var(--rule) 31px, var(--rule) 32px);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Grain: paper is never perfectly flat. */
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.35;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .2 0 0 0 0 .18 0 0 0 0 .14 0 0 0 .08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+h1,
+h2,
+h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+    margin: 0 0 0.6rem;
+}
+
+h2 {
+    font-size: 1.35rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+}
+
+h2::after {
+    content: "";
+    flex: 1;
+    border-bottom: 1px solid var(--line);
+    transform: translateY(-0.3em);
+}
+
+code,
+output,
+.amount,
+time,
+.tx,
+.running,
+.credit,
+.debit {
+    font-family: var(--figures);
+    font-variant-numeric: tabular-nums;
+}
+
+a {
+    color: inherit;
+}
+
+button,
+input {
+    font: inherit;
+    color: inherit;
+}
+
+button {
+    cursor: pointer;
+    border: 1px solid var(--ink);
+    background: transparent;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--radius);
+    transition:
+        background 120ms ease,
+        color 120ms ease,
+        transform 120ms ease;
+}
+
+button:hover:not(:disabled) {
+    background: var(--ink);
+    color: var(--paper);
+}
+
+button:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+button.primary {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    padding: 0.7rem 1.2rem;
+    letter-spacing: 0.02em;
+}
+
+button.primary:hover:not(:disabled) {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+button.ghost {
+    border-style: dashed;
+    border-color: var(--ink-faint);
+    color: var(--ink-soft);
+}
+
+button.link {
+    border: none;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    color: var(--ink-soft);
+}
+
+button.link:hover:not(:disabled) {
+    background: none;
+    color: var(--accent);
+}
+
+label {
+    display: grid;
+    gap: 0.25rem;
+    font-size: 0.82rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
+label small {
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink-faint);
+}
+
+input {
+    font-family: var(--figures);
+    font-size: 1rem;
+    text-transform: none;
+    letter-spacing: 0;
+    padding: 0.6rem 0.2rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1.5px solid var(--ink);
+    border-radius: 0;
+    outline: none;
+}
+
+input:focus {
+    border-bottom-color: var(--accent);
+    background: linear-gradient(180deg, transparent 70%, rgba(210, 64, 43, 0.06));
+}
+
+/* ---- Layout ------------------------------------------------------------ */
+
+.shell {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 4rem 5rem;
+}
+
+.masthead {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+        "brand dial"
+        "nav nav";
+    align-items: center;
+    gap: 1rem 1.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 3px double var(--ink);
+    margin-bottom: 2.2rem;
+}
+
+.masthead .brand {
+    grid-area: brand;
+}
+
+.masthead .dial {
+    grid-area: dial;
+}
+
+.masthead nav {
+    grid-area: nav;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.brand strong {
+    font-family: var(--display);
+    font-size: 1.45rem;
+    display: block;
+    line-height: 1;
+}
+
+.brand small {
+    color: var(--ink-soft);
+    font-size: 0.82rem;
+}
+
+.mark {
+    font-family: var(--display);
+    font-size: 2.6rem;
+    line-height: 1;
+    color: var(--accent);
+}
+
+nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 1.6rem;
+    font-family: var(--display);
+    font-size: 1.02rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--line);
+}
+
+nav a {
+    text-decoration: none;
+    white-space: nowrap;
+    padding-bottom: 2px;
+    border-bottom: 2px solid transparent;
+}
+
+nav .link {
+    margin-left: auto;
+}
+
+nav a[aria-current="page"] {
+    border-bottom-color: var(--accent);
+}
+
+nav a:hover {
+    color: var(--accent);
+}
+
+.page {
+    display: grid;
+    gap: 1.6rem;
+}
+
+.page.narrow {
+    max-width: 560px;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.4rem 1.5rem;
+    box-shadow:
+        0 1px 0 rgba(27, 26, 23, 0.04),
+        6px 6px 0 -1px var(--paper-deep),
+        6px 6px 0 0 var(--line);
+    display: grid;
+    gap: 1rem;
+}
+
+.muted,
+.note {
+    color: var(--ink-soft);
+}
+
+.error {
+    color: var(--accent);
+    margin: 0;
+    font-style: italic;
+}
+
+.success {
+    color: var(--credit);
+    margin: 0;
+}
+
+.loading {
+    font-family: var(--display);
+    font-style: italic;
+    color: var(--ink-soft);
+    padding: 4rem 5rem;
+}
+
+/* ---- Tabs ---------------------------------------------------------------- */
+
+.tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 0.4rem 0.9rem 0.5rem 0;
+    margin-right: 1rem;
+    font-family: var(--display);
+    color: var(--ink-soft);
+}
+
+.tabs button:hover:not(:disabled) {
+    background: none;
+    color: var(--ink);
+}
+
+.tabs button[aria-selected="true"] {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+}
+
+/* ---- The custody dial ------------------------------------------------------ */
+
+.dial {
+    margin: 0;
+    display: grid;
+    justify-items: center;
+}
+
+.dial-face {
+    width: 120px;
+    overflow: visible;
+}
+
+.dial-arc {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.5;
+    stroke-dasharray: 2 3;
+}
+
+.dial-tick {
+    stroke: var(--ink);
+    stroke-width: 2;
+}
+
+.dial-needle {
+    transform-origin: 60px 64px;
+    transition: transform 900ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.dial-needle line {
+    stroke: var(--accent);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+}
+
+.dial-hub {
+    fill: var(--ink);
+}
+
+.dial figcaption {
+    display: flex;
+    gap: 0.9rem;
+    font-size: 0.72rem;
+    margin-top: 0.2rem;
+}
+
+.tier {
+    display: grid;
+    text-align: center;
+    color: var(--ink-faint);
+    line-height: 1.2;
+}
+
+.tier b {
+    font-family: var(--display);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.tier.current {
+    color: var(--ink);
+}
+
+.tier.current b {
+    color: var(--accent);
+}
+
+/* ---- Balances ---------------------------------------------------------------- */
+
+.balances {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 1.6rem;
+    align-items: end;
+}
+
+.figure {
+    display: grid;
+    gap: 0.1rem;
+    border-left: 1px solid var(--line);
+    padding-left: 1rem;
+}
+
+.figure.hero {
+    border-left: none;
+    padding-left: 0;
+}
+
+.label {
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
+.amount {
+    font-size: 3.6rem;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: -0.03em;
+}
+
+.amount.small {
+    font-size: 1.6rem;
+}
+
+.unit {
+    font-family: var(--display);
+    font-style: italic;
+    color: var(--ink-soft);
+}
+
+.figure .note {
+    font-size: 0.78rem;
+}
+
+/* ---- Deposit ---------------------------------------------------------------- */
+
+.deposit p {
+    margin: 0;
+}
+
+.address-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.address-row code {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: 0.55rem 0.7rem;
+    background: var(--paper);
+    border: 1px dashed var(--ink-faint);
+    border-radius: var(--radius);
+    font-size: 0.92rem;
+}
+
+.deposit .ghost {
+    justify-self: start;
+}
+
+/* ---- Ledger entries ------------------------------------------------------------ */
+
+.entries {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.entries li {
+    display: grid;
+    grid-template-columns: 1.6fr 0.8fr 1fr 1fr;
+    gap: 1rem;
+    padding: 0.42rem 0;
+    border-bottom: 1px solid var(--rule);
+    animation: write-in 420ms ease both;
+    font-size: 0.92rem;
+}
+
+.entries time,
+.entries .tx {
+    color: var(--ink-faint);
+}
+
+.entries .credit,
+.entries .debit,
+.entries .running {
+    text-align: right;
+}
+
+.credit {
+    color: var(--credit);
+}
+
+.debit {
+    color: var(--accent);
+}
+
+.running {
+    color: var(--ink-soft);
+}
+
+/* ---- Page introductions ------------------------------------------------------- */
+
+.intro h1 {
+    font-size: clamp(2rem, 4vw, 3rem);
+}
+
+.intro .lede {
+    margin: 0;
+}
+
+.success-card {
+    border-color: var(--credit);
+}
+
+.success-card h2 {
+    color: var(--credit);
+}
+
+textarea {
+    font-family: var(--figures);
+    font-size: 0.92rem;
+    text-transform: none;
+    letter-spacing: 0;
+    padding: 0.5rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    resize: vertical;
+}
+
+details summary {
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-style: italic;
+}
+
+details[open] {
+    display: grid;
+    gap: 0.8rem;
+}
+
+.stack {
+    display: grid;
+    gap: 0.8rem;
+    justify-items: start;
+}
+
+.stack label,
+.stack p {
+    justify-self: stretch;
+    margin: 0;
+}
+
+/* ---- Steps: a numbered column, like a ledger's entry numbers ------------------- */
+
+.steps {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem 1.5rem;
+    gap: 0;
+}
+
+.step {
+    display: grid;
+    grid-template-columns: 3.2rem 1fr;
+    gap: 1rem;
+    padding: 1.1rem 0;
+    border-bottom: 1px solid var(--rule);
+}
+
+.step:last-child {
+    border-bottom: none;
+}
+
+.step-n {
+    font-family: var(--display);
+    font-size: 1.7rem;
+    font-style: italic;
+    color: var(--ink-faint);
+    text-align: right;
+    line-height: 1;
+}
+
+.step.now .step-n {
+    color: var(--accent);
+}
+
+.step.done .step-n {
+    color: var(--credit);
+}
+
+.step.later {
+    opacity: 0.45;
+}
+
+.step h3 {
+    font-size: 1.15rem;
+    margin: 0 0 0.5rem;
+}
+
+.step.done .step-body p {
+    margin: 0;
+}
+
+/* ---- Facts ------------------------------------------------------------------------ */
+
+.facts dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1.2rem;
+    margin: 0;
+}
+
+.facts dt {
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding-top: 0.2rem;
+}
+
+.facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* ---- The proof walk: from a leaf to the root, one level at a time -------------------- */
+
+.walk {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 1.2rem;
+    border-left: 2px solid var(--ink);
+    display: grid;
+    gap: 0.2rem;
+}
+
+.walk li {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 1rem;
+    align-items: baseline;
+    padding: 0.35rem 0;
+    position: relative;
+    animation: write-in 420ms ease both;
+    font-size: 0.92rem;
+}
+
+.walk li::before {
+    content: "";
+    position: absolute;
+    left: -1.62rem;
+    top: 0.85rem;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: var(--paper);
+    border: 2px solid var(--ink);
+}
+
+.walk li:last-child::before {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.walk-label {
+    color: var(--ink-soft);
+}
+
+.walk-sibling,
+.walk-node {
+    font-family: var(--figures);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.walk-sibling {
+    color: var(--ink-faint);
+}
+
+.verdict {
+    padding: 1rem 1.2rem;
+    border-radius: var(--radius);
+    animation: write-in 500ms ease both;
+}
+
+.verdict.ok {
+    background: rgba(47, 93, 80, 0.08);
+    border: 1px solid var(--credit);
+}
+
+.verdict.bad {
+    background: rgba(210, 64, 43, 0.06);
+    border: 1px solid var(--accent);
+}
+
+.verdict strong {
+    font-family: var(--display);
+    font-size: 1.15rem;
+}
+
+/* ---- Guardians, sessions, the vault ------------------------------------------------ */
+
+.alarm {
+    border-color: var(--accent);
+    box-shadow:
+        0 0 0 3px rgba(210, 64, 43, 0.12),
+        6px 6px 0 -1px var(--paper-deep),
+        6px 6px 0 0 var(--accent);
+}
+
+.alarm h2 {
+    color: var(--accent);
+}
+
+ol.plain {
+    margin: 0;
+    padding-left: 1.4rem;
+}
+
+.issued {
+    padding: 0.9rem 1rem;
+    border: 1px dashed var(--accent);
+    border-radius: var(--radius);
+    background: rgba(210, 64, 43, 0.04);
+    overflow-wrap: anywhere;
+}
+
+.issued p {
+    margin: 0 0 0.4rem;
+}
+
+.sessions li {
+    grid-template-columns: 1fr 0.7fr 1.2fr 0.5fr;
+    align-items: center;
+}
+
+.proposals {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.proposals li {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--rule);
+}
+
+.proposal-state {
+    font-family: var(--figures);
+    font-size: 0.88rem;
+    color: var(--ink-soft);
+}
+
+.proposal-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.guard {
+    grid-template-columns: 1fr 1fr;
+}
+
+.facts-list {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1rem;
+    margin: 0;
+}
+
+.facts-list dt {
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
+.facts-list dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* ---- Sign in ------------------------------------------------------------------- */
+
+.auth {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 4rem;
+    align-items: center;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 3rem 2rem 3rem 6rem;
+}
+
+.kicker {
+    font-size: 0.8rem;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1rem;
+}
+
+.auth h1 {
+    font-size: clamp(2.4rem, 5vw, 3.8rem);
+    line-height: 1.02;
+}
+
+.auth h1 em {
+    font-style: italic;
+    color: var(--ink-soft);
+}
+
+.lede {
+    max-width: 34rem;
+    color: var(--ink-soft);
+    font-size: 1.08rem;
+}
+
+.auth-form {
+    gap: 1.2rem;
+}
+
+/* ---- Motion ---------------------------------------------------------------------- */
+
+.reveal {
+    animation: write-in 600ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.reveal:nth-child(2) {
+    animation-delay: 90ms;
+}
+
+.reveal:nth-child(3) {
+    animation-delay: 180ms;
+}
+
+@keyframes write-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+        filter: blur(1px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+        filter: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+@media (max-width: 760px) {
+    body {
+        background-image: repeating-linear-gradient(180deg, transparent 0, transparent 31px, var(--rule) 31px, var(--rule) 32px);
+    }
+    .shell,
+    .auth {
+        padding: 1rem;
+    }
+    .auth,
+    .balances {
+        grid-template-columns: 1fr;
+    }
+    .masthead {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "brand"
+            "dial"
+            "nav";
+    }
+    .entries li {
+        grid-template-columns: 1fr 1fr;
+    }
+}

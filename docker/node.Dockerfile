@@ -18,6 +18,7 @@ WORKDIR /app
 RUN mkdir -p /app/node_modules \
              /app/services/api/node_modules \
              /app/packages/shared/node_modules \
+             /app/web/node_modules \
     && chown -R node:node /app
 
 USER node
