@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { encodeFunctionData, type Address, type Hex, type PublicClient } from "viem";
+import { z } from "zod";
 
 import type { Pool } from "../db/pool.ts";
 import { requireAdmin } from "../auth/sessions.ts";
@@ -9,6 +10,7 @@ import {
     addSignature,
     createProposal,
     getProposal,
+    listProposals,
     retryProposal,
     type Proposal,
 } from "../vault/proposals.ts";
@@ -88,6 +90,14 @@ export function registerVaultRoutes(
         const { to, value, data, deadline } = createProposalSchema.parse(request.body);
         const proposal = await createProposal({ pool, client }, { vault, to, value, data, deadline });
         return reply.code(201).send(present(proposal));
+    });
+
+    // The owners' queue, to read: public like each proposal, since anything an
+    // owner could sign is meant to be seen before it is signed.
+    app.get("/api/v1/vault/proposals", async (request) => {
+        requireVault();
+        const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }).parse(request.query);
+        return (await listProposals(pool, limit)).map((proposal) => ({ ...present(proposal), collected: proposal.collected }));
     });
 
     app.get("/api/v1/vault/proposals/:id", async (request) => {

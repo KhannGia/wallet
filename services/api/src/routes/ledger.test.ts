@@ -162,6 +162,25 @@ describe("ledger API", () => {
         await assertBalanced(deps.pool);
     });
 
+    it("transfers only to another user's account", async () => {
+        const alice = await createAccount("only-users@test.local");
+        await fund(alice, 1000n);
+
+        // Account 1 is BANK_GATEWAY: the outside world's side of deposits and payouts.
+        for (const [key, toAccountId, status, error] of [
+            ["sys", "1", 404, "account_not_found"],
+            ["missing", "999999", 404, "account_not_found"],
+            ["self", alice, 422, "same_account"],
+        ] as const) {
+            const response = await money("/api/v1/transfers", key, { fromAccountId: alice, toAccountId, amount: "100" });
+            assert.equal(response.statusCode, status, response.body);
+            assert.equal(response.json().error, error);
+        }
+        const account = await app.inject({ method: "GET", url: `/api/v1/accounts/${alice}`, headers: as(alice) });
+        assert.equal(account.json().balance, "1000");
+        await assertBalanced(deps.pool);
+    });
+
     it("pages entries newest first with a cursor", async () => {
         const accountId = await createAccount("pager@test.local");
         const other = await createAccount("pager-b@test.local");
@@ -193,6 +212,11 @@ describe("ledger API", () => {
 
         assert.equal(secondBody.entries.length, 2);
         // Pages must not overlap.
+        // Each entry says what moved the money.
+        assert.deepEqual(
+            [...body.entries, ...secondBody.entries].map((entry: { kind: string }) => entry.kind),
+            ["TRANSFER", "TRANSFER", "TRANSFER", "TRANSFER"],
+        );
         const firstIds = body.entries.map((entry: { id: string }) => entry.id);
         const secondIds = secondBody.entries.map((entry: { id: string }) => entry.id);
         assert.equal(firstIds.some((id: string) => secondIds.includes(id)), false);

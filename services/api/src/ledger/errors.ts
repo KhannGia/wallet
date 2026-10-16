@@ -77,3 +77,9 @@ export class PayoutsNotConfigured extends LedgerError {
         );
     }
 }
+
+export class SameAccountTransfer extends LedgerError {
+    constructor() {
+        super("same_account", 422, "An account cannot transfer to itself");
+    }
+}

@@ -512,6 +512,16 @@ export async function getProposal(pool: Pool, id: bigint): Promise<ProposalDetai
     };
 }
 
+/** The latest proposals, newest first, with how many owners have signed each. */
+export async function listProposals(pool: Pool, limit: number): Promise<(Proposal & { collected: number })[]> {
+    const { rows } = await pool.query<ProposalRow & { collected: bigint }>(
+        `SELECT p.*, (SELECT COUNT(*) FROM vault_signatures s WHERE s.proposal_id = p.id) AS collected
+           FROM vault_proposals p ORDER BY p.id DESC LIMIT $1`,
+        [limit],
+    );
+    return rows.map((row) => ({ ...toProposal(row), collected: Number(row.collected) }));
+}
+
 /**
  * Proposals the submitter should try: still collecting, at quorum, and with no
  * recorded failure.

@@ -82,6 +82,15 @@ export async function getGraduation(pool: Pool, id: bigint): Promise<Graduation>
     return toGraduation(row);
 }
 
+/** An account's graduations, newest first: what the user has done, and where it stands. */
+export async function listGraduations(pool: Pool, accountId: bigint): Promise<Graduation[]> {
+    const { rows } = await pool.query<GraduationRow>(
+        "SELECT * FROM graduations WHERE account_id = $1 ORDER BY id DESC",
+        [accountId],
+    );
+    return rows.map(toGraduation);
+}
+
 function isUniqueViolation(error: unknown): boolean {
     return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
