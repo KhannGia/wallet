@@ -22,6 +22,17 @@ export const MAX_GUARDIANS = 10;
 // any other selector fails to decode rather than being mistaken for it.
 const adoptModuleAbi = parseAbi(["function setRecoveryModule(address module)"]);
 const setGuardiansAbi = parseAbi(["function setGuardians(address[] guardians, uint256 threshold)"]);
+const cancelRecoveryAbi = parseAbi(["function cancelRecovery()"]);
+const sessionAbi = parseAbi([
+    "struct Condition { uint8 param; uint8 operator; bytes32 value; }",
+    "struct Permission { address target; bytes4 selector; Condition[] conditions; }",
+    "struct SpendLimit { address token; uint256 limit; }",
+    "function addSession(address key, uint48 validAfter, uint48 validUntil, uint256 nativeLimit, Permission[] permissions, SpendLimit[] limits)",
+    "function revokeSession(address key)",
+]);
+
+/** The most permissions, spend limits, or conditions on one permission, a sponsored session may carry. */
+export const MAX_SESSION_RULES = 10;
 
 /** What a verdict depends on besides the call data. */
 export interface PolicyContext {
@@ -39,10 +50,10 @@ export type CallVerdict = { allowed: true } | { allowed: false; reason: string }
  * Whether the platform pays for this call data.
  *
  * Token transfers of the platform's own token, from the account's own execute
- * or executeBatch -- and, from the owner only, setting up recovery: adopting the
- * platform's guardian module and naming guardians in it. That is what an
- * account does when it is activated, before it holds anything to transfer, and
- * the platform wants every graduated account to be able to do it for free.
+ * or executeBatch -- and, from the owner only, looking after the account:
+ * adopting the platform's guardian module and naming guardians in it, vetoing a
+ * recovery the owner did not ask for, granting and revoking session keys. A
+ * graduated account holds no ether, and none of that should need any.
  *
  * Nothing else. A paymaster pays even when the call reverts, and pays for
  * whatever the call does: sponsoring arbitrary calls would let anyone burn the
@@ -64,7 +75,7 @@ export function checkCalls(callData: Hex, context: PolicyContext): CallVerdict {
         }
         // Token transfers only: a session key never reaches the account's
         // configuration, and the contract would refuse it anyway.
-        return checkEach([{ target, value, data }], { token: context.token, account: context.account });
+        return checkEach([{ target, value, data }], { token: context.token, account: context.account }, false);
     }
 
     let decoded;
@@ -86,7 +97,7 @@ export function checkCalls(callData: Hex, context: PolicyContext): CallVerdict {
     if (calls.length === 0 || calls.length > MAX_BATCH_CALLS) {
         return { allowed: false, reason: `a batch must hold 1 to ${MAX_BATCH_CALLS} calls` };
     }
-    return checkEach(calls, context);
+    return checkEach(calls, context, true);
 }
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -94,16 +105,17 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 function checkEach(
     calls: readonly { target: Address; value: bigint; data: Hex }[],
     context: PolicyContext,
+    fromOwner: boolean,
 ): CallVerdict {
     for (const [index, call] of calls.entries()) {
         if (call.value !== 0n) {
             return { allowed: false, reason: `call ${index} sends ether` };
         }
         if (!same(call.target, context.token)) {
-            if (context.guardianModule === undefined) {
+            if (!fromOwner) {
                 return { allowed: false, reason: `call ${index} targets ${call.target}, not the token` };
             }
-            const verdict = checkRecoverySetup(index, call, context.account, context.guardianModule);
+            const verdict = checkAdministration(index, call, context.account, context.guardianModule);
             if (!verdict.allowed) return verdict;
             continue;
         }
@@ -126,51 +138,83 @@ function checkEach(
     return { allowed: true };
 }
 
+/** Call data equal byte for byte to its canonical encoding: nothing hidden after the arguments. */
+function canonical(data: Hex, encoded: Hex): boolean {
+    return same(data, encoded);
+}
+
 /**
- * Whether a call that is not a token transfer is recovery setup the platform
- * pays for. Both kinds are compared byte for byte against their canonical
- * encoding, so call data carrying anything beyond the arguments is refused.
+ * Whether an owner's call that is not a token transfer is administration the
+ * platform pays for. Every kind is compared byte for byte against its
+ * canonical encoding, so call data carrying anything beyond the arguments is
+ * refused.
  */
-function checkRecoverySetup(
+function checkAdministration(
     index: number,
     call: { target: Address; data: Hex },
     account: Address,
-    guardianModule: Address,
+    guardianModule: Address | undefined,
 ): CallVerdict {
-    // The account adopting the platform's module -- that module, no other, and
-    // on itself, not on some other account.
     if (same(call.target, account)) {
-        const adopt = encodeFunctionData({
-            abi: adoptModuleAbi,
-            functionName: "setRecoveryModule",
-            args: [guardianModule],
-        });
-        if (same(call.data, adopt)) return { allowed: true };
-        return { allowed: false, reason: `call ${index} is not adopting the guardian module` };
+        // Adopting the platform's module -- that module, no other, and on
+        // itself, not on some other account.
+        if (
+            guardianModule !== undefined &&
+            canonical(call.data, encodeFunctionData({ abi: adoptModuleAbi, functionName: "setRecoveryModule", args: [guardianModule] }))
+        ) {
+            return { allowed: true };
+        }
+
+        let decoded;
+        try {
+            decoded = decodeFunctionData({ abi: sessionAbi, data: call.data });
+        } catch {
+            return { allowed: false, reason: `call ${index} is not account administration the platform pays for` };
+        }
+        if (decoded.functionName === "revokeSession") {
+            const encoded = encodeFunctionData({ abi: sessionAbi, functionName: "revokeSession", args: decoded.args });
+            return canonical(call.data, encoded)
+                ? { allowed: true }
+                : { allowed: false, reason: `call ${index} is not a plain revokeSession` };
+        }
+        const [, , , , permissions, limits] = decoded.args;
+        // Bounded, so one sponsored grant cannot be made arbitrarily expensive.
+        if (
+            permissions.length > MAX_SESSION_RULES ||
+            limits.length > MAX_SESSION_RULES ||
+            permissions.some((permission) => permission.conditions.length > MAX_SESSION_RULES)
+        ) {
+            return { allowed: false, reason: `call ${index} grants a session more than ${MAX_SESSION_RULES} rules of a kind` };
+        }
+        const encoded = encodeFunctionData({ abi: sessionAbi, functionName: "addSession", args: decoded.args });
+        return canonical(call.data, encoded)
+            ? { allowed: true }
+            : { allowed: false, reason: `call ${index} is not a plain addSession` };
     }
 
-    // The account naming its guardians in that module. The module keys them by
-    // its caller, so they can only ever be the sender's own.
-    if (same(call.target, guardianModule)) {
+    if (guardianModule !== undefined && same(call.target, guardianModule)) {
+        // The owner vetoing a recovery in progress: free, or a lost-key alarm
+        // would cost the very user it protects.
+        if (canonical(call.data, encodeFunctionData({ abi: cancelRecoveryAbi, functionName: "cancelRecovery" }))) {
+            return { allowed: true };
+        }
+
+        // Naming guardians in that module. The module keys them by its caller,
+        // so they can only ever be the sender's own.
         let decoded;
         try {
             decoded = decodeFunctionData({ abi: setGuardiansAbi, data: call.data });
         } catch {
-            return { allowed: false, reason: `call ${index} is not setGuardians` };
+            return { allowed: false, reason: `call ${index} is not setGuardians or cancelRecovery` };
         }
         const [guardians, threshold] = decoded.args;
         if (guardians.length > MAX_GUARDIANS) {
             return { allowed: false, reason: `call ${index} names more than ${MAX_GUARDIANS} guardians` };
         }
-        const canonical = encodeFunctionData({
-            abi: setGuardiansAbi,
-            functionName: "setGuardians",
-            args: [guardians, threshold],
-        });
-        if (!same(call.data, canonical)) {
-            return { allowed: false, reason: `call ${index} is not a plain setGuardians` };
-        }
-        return { allowed: true };
+        const encoded = encodeFunctionData({ abi: setGuardiansAbi, functionName: "setGuardians", args: [guardians, threshold] });
+        return canonical(call.data, encoded)
+            ? { allowed: true }
+            : { allowed: false, reason: `call ${index} is not a plain setGuardians` };
     }
 
     return { allowed: false, reason: `call ${index} targets ${call.target}, not the token` };
