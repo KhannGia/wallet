@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { expect, type Page } from "@playwright/test";
 import { createPublicClient, erc20Abi, http, type Address } from "viem";
 import { foundry } from "viem/chains";
@@ -48,12 +46,11 @@ export const VAULT_OWNER_KEYS = [
     "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
 ] as const;
 
-/** The demo's admin token, from the configuration its bootstrap wrote. */
+/** The demo's admin token, which ./wallet e2e passes in from the configuration its bootstrap wrote. */
 export function adminToken(): string {
-    const env = readFileSync(new URL("../../.env.demo", import.meta.url), "utf8");
-    const token = /^API_ADMIN_TOKEN=(.+)$/m.exec(env)?.[1];
-    if (!token) throw new Error("No API_ADMIN_TOKEN in .env.demo: run ./wallet demo up first");
-    return token.trim();
+    const token = process.env.E2E_ADMIN_TOKEN;
+    if (!token) throw new Error("E2E_ADMIN_TOKEN is not set: run the tests with ./wallet e2e, after ./wallet demo up");
+    return token;
 }
 
 /** Moves the demo chain's clock forward, past a timelock or a recovery delay. */
