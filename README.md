@@ -1,1207 +1,178 @@
-# wallet
+# Ledger & Key
 
-A custodial crypto wallet with a real path to self-custody: an off-chain
-double-entry ledger for instant internal transfers, on-chain settlement for
-deposits and withdrawals, an M-of-N multi-sig vault for reserves, and ERC-4337
-smart accounts so users can graduate to holding their own funds without the risk
-of losing a seed phrase.
+**A custodial crypto wallet with a door out.** Users start the easy way -- we
+hold their USDC, transfers between users are free and instant, nobody sees a
+gas fee -- and when they are ready, one flow moves their balance to a smart
+account only their own key controls, with guardians in case they lose it. For
+as long as we do hold money, anyone can check that we hold all of it.
 
-Read [PROJECT.md](PROJECT.md) for the problem statement, architecture and full
-roadmap.
+![Proof of reserves, checked in the browser](docs/images/proof-of-reserves.png)
 
-> **Testnet only.** This is a learning project. It must never hold third-party
-> funds, and it is not a licensed custody service.
+> **Testnet only.** A learning project. It must never hold third-party funds,
+> and it is not a licensed custody service. [What it would take](docs/threat-model.md#known-gaps).
 
-**Current status: P9 complete — the multisig vault in operation.** A proposal to
-move reserves is opened through the API, owners sign the EIP-712 typed data it
-returns with their own wallets, and a separate worker submits it once a quorum
-exists. The vault enforces an on-chain timelock: anything but a small
-hot-wallet top-up is queued and waits out a delay, during which any single
-owner can cancel it, and the submitter carries a proposal through the queue.
-The hot wallet is kept inside a band automatically: a top-up is proposed to the
-vault's owners when it runs low, and the excess goes back when it holds too
-much.
+## Five minutes
 
-**P10 complete — ERC-4337 smart accounts.** A user's `SmartAccount` exists at a
-known address before it is deployed, and its first UserOperation -- sent through
-a real bundler to the canonical EntryPoint v0.8 on the local chain -- deploys it
-and moves funds in one step.
+```bash
+./wallet demo up      # Docker is the only requirement; first run takes a few minutes
+```
 
-**P11 complete — a paymaster, so users need no ether.** An account that has
-never held ether deploys itself and pays USDC through the real bundler, its gas
-paid by `VerifyingPaymaster` on the strength of a sponsorship the platform's
-ERC-7677 service signed after checking its policy.
+Open <http://localhost:5273>, open an account, and press the devnet faucet.
+Then follow the money:
 
-**P12 complete — social recovery.** An owner who loses their key is restored by
-a quorum of guardians they chose: guardians approve over the API from their own
-wallets, a relayer starts the recovery, and after a 48-hour delay -- in which
-the owner or the guardians can cancel -- hands the account to the new key, which
-then drives it through the bundler.
+1. **Account** -- the deposit shows as *arriving*, then *available* once its
+   block is final.
+2. **Send** -- to another user, inside the ledger; or out to any address, on
+   chain.
+3. **Self-custody** -- make a key in the browser, deploy your smart account
+   with guardians (the platform pays the gas), and move your balance to it.
+   The dial at the top moves from *Starter* to *Smart*.
+4. **Reserves** -- check that what you are owed is inside the total the
+   platform published on chain. Your browser does the checking.
 
-**P13 complete — session keys.** The owner can hand an app or a bot a second
-key bounded in time, in what it may call down to the arguments, and in how much
-it may move. The account's operations pass a bundler that enforces ERC-7562,
-and a session manager holds keys for apps -- sealed at rest, shredded when a
-session ends -- spending with them on request, gas sponsored by the paymaster.
+`./wallet demo down` stops it. `./wallet e2e` drives every one of these flows,
+and more, in a real browser.
 
-**P14 complete — graduation.** A custodial user moves their whole balance to a
-smart account only their own key controls: they open a graduation over the API,
-deploy the account and name guardians in one operation the paymaster pays for,
-and only then does the platform send the funds through the withdrawal worker.
-A transfer that fails on chain puts the balance back in custody, whole.
+## How it fits together
 
-**P15 complete — proof of reserves.** Every few minutes the platform reads what
-it holds on chain against what it owes, at one block, and publishes the root of
-a Merkle sum tree over every user's balance to a contract. A user takes their
-proof from the API and checks it against that root on chain, trusting nothing
-the platform says.
+```mermaid
+flowchart TB
+  user(["User's browser<br/>the app · their own key"])
 
-## Requirements
+  subgraph platform["Platform"]
+    api["API<br/>no private keys"]
+    db[("Postgres<br/>double-entry ledger")]
+    indexer["Indexer<br/>credits final deposits"]
+    withdrawer["Withdrawal worker<br/>hot wallet key"]
+    sweeper["Sweeper"]
+    submitter["Vault submitter"]
+    paymaster["Paymaster service<br/>sponsors gas"]
+    relayer["Recovery relayer"]
+    reserves["Reserves worker<br/>publishes roots"]
+  end
 
-Docker. That is the entire list.
+  subgraph chain["Chain"]
+    hot["Hot wallet"]
+    deposits["Deposit addresses"]
+    vault["MultisigVault<br/>2 of 3 + timelock"]
+    ep["EntryPoint v0.8"]
+    account["SmartAccount<br/>the user's own"]
+    guardians["GuardianModule"]
+    registry["ReservesRegistry"]
+  end
 
-Everything -- Node, npm, Foundry, Postgres -- runs in containers, and every
-generated directory (`node_modules`, `contracts/lib`, build output) lives in a
-Docker volume rather than on the host.
+  user -- "sign in, transfer, pay out" --> api
+  user -- "signed user operations" --> ep
+  api --- db
+  indexer -- "watches" --> deposits
+  sweeper -- "empties into" --> hot
+  withdrawer -- "pays out from" --> hot
+  submitter -- "approved by owners" --> vault
+  vault -- "tops up" --> hot
+  hot -- "graduation" --> account
+  ep --> account
+  paymaster -. "pays for" .-> ep
+  relayer --> guardians
+  guardians -. "new owner after 48h" .-> account
+  reserves -- "root + totals" --> registry
+  indexer & withdrawer & sweeper & submitter & reserves --- db
+```
 
-## Quick start
+**Custody as a dial, not a switch.** While the platform holds a balance, the
+ledger is the source of truth and the reserves sit in the hot wallet and a
+multisig vault. Once a user graduates, the balance is in their own account:
+the platform can pay its gas, and can do nothing else with it.
+
+**Every key in one place, and only one.** The API derives deposit addresses
+from an xpub and holds no private key. Each worker holds exactly the key it
+needs, and every one refuses to start if two roles share a key.
+
+## Four things worth a look
+
+1. **A reorg that loses no money.** A deposit is spendable only once its block
+   is final; if the block disappears first, the deposit is reversed and the
+   indexer rewinds. [`chain/reorg.test.ts`](services/api/src/chain/reorg.test.ts)
+   induces one on anvil.
+2. **Twenty withdrawals at once, no nonce twice.** Nonces come from the
+   database, not the node, and a stuck transaction is replaced at its own
+   nonce. [`chain/nonce.test.ts`](services/api/src/chain/nonce.test.ts),
+   [`chain/withdrawal-worker.test.ts`](services/api/src/chain/withdrawal-worker.test.ts).
+3. **Twelve multisig attacks that drained real funds**, each refused.
+   [`MultisigVault.attacks.t.sol`](contracts/test/vault/MultisigVault.attacks.t.sol)
+   -- and the same for the smart account, its session keys, the paymaster and
+   the guardian module.
+4. **Proof of reserves anyone can check.** A Merkle sum tree over every
+   user's balance, its root published on chain, and a verifier that trusts
+   only the user's own proof. [`merkle-sum.ts`](packages/shared/src/merkle-sum.ts),
+   [`ReservesRegistry.sol`](contracts/src/reserves/ReservesRegistry.sol).
+
+Every contract has 100% line, branch and function coverage, and each phase's
+code was mutation-tested: changed on purpose, one defence at a time, until a
+test failed -- or the change was shown to make no difference.
+
+## Read more
+
+| | |
+| - | - |
+| [docs/phases/](docs/phases/README.md) | How it was built, one phase at a time, with what each had to get right |
+| [docs/threat-model.md](docs/threat-model.md) | What it protects, from whom, and the gaps still open |
+| [docs/security-review.md](docs/security-review.md) | The contracts' review: Slither triaged, a manual checklist, accepted risks |
+| [docs/walkthrough.md](docs/walkthrough.md) | The same flows with `curl`, one service at a time |
+| [PROJECT.md](PROJECT.md) | The problem, the design, and the roadmap it followed |
+
+## Developing
+
+Docker is the only requirement: Node, npm, Foundry and Postgres run in
+containers, and every generated directory -- `node_modules`, `contracts/lib`,
+build output -- lives in a Docker volume rather than on the host.
 
 ```bash
 cp .env.example .env
-./wallet install     # install npm + Solidity dependencies into volumes
-./wallet up          # start Postgres, anvil and the API
-./wallet migrate     # create the ledger schema
-./wallet test        # run both test suites
+./wallet install     # npm and Solidity dependencies, into volumes
+./wallet up          # Postgres, anvil, the bundler and the API
+./wallet migrate     # the schema
+./wallet test        # every backend and Solidity test
 ```
 
-Then:
+Run `./wallet help` for everything. The ones used most:
 
-```bash
-curl -s localhost:3000/health/ready | jq
-```
+| Command | What it does |
+| ------- | ------------ |
+| `./wallet demo up` / `down` / `logs` | The whole platform with the frontend, on its own devnet and ports |
+| `./wallet e2e` | The frontend's end-to-end tests, against the demo |
+| `./wallet test` | Backend and Solidity tests |
+| `./wallet test-node [group]` | Backend tests: all, or one of `core`, `chain`, `vault`, `aa`, `erc7562`, `graduation` (CI runs them in parallel) |
+| `./wallet test-forge` / `coverage` | Solidity tests; coverage of `src/` |
+| `./wallet slither` | Static analysis of the contracts |
+| `./wallet typecheck` | Type-check the backend and the frontend |
+| `./wallet migrate` / `db-reset` / `psql` | The development database |
+| `./wallet indexer`, `withdrawer`, `sweeper`, `vault-submitter`, `paymaster`, `recovery-relayer`, `reserves` | Each worker, on its own, against the development stack |
+| `./wallet keygen` | An HD wallet, generated offline; prints the mnemonic once |
+| `./wallet cast ...` | `cast` against the local chain |
 
-`make` works too if you prefer it (`make test`), but it is not required.
-
-## Commands
-
-Run `./wallet help` for the full list. The ones used most:
-
-| Command             | What it does                                          |
-| ------------------- | ----------------------------------------------------- |
-| `./wallet up`       | Start the whole stack, waiting until it is healthy     |
-| `./wallet dev`      | Same, then follow logs                                 |
-| `./wallet test`     | Backend tests and Solidity tests                       |
-| `./wallet test-node [group]` | Backend tests, all or one of `core`, `chain`, `vault`, `aa`, `erc7562`, `graduation` (CI runs the groups in parallel) |
-| `./wallet coverage` | Solidity coverage for contracts under `src/`           |
-| `./wallet typecheck`| Type-check the workspace                               |
-| `./wallet keygen`   | Generate an HD wallet offline (prints a mnemonic once)  |
-| `./wallet deploy-token` | Deploy the devnet ERC-20 and print its address     |
-| `./wallet indexer`  | Watch the chain and credit deposits                    |
-| `./wallet withdrawer` | Sign and broadcast payouts (holds the spending key)  |
-| `./wallet sweeper`  | Consolidate deposit addresses into the hot wallet       |
-| `./wallet vault-submitter` | Submit vault proposals that have reached quorum |
-| `./wallet reserves` | Snapshot reserves against liabilities and publish the root |
-| `./wallet verify-proof <file>` | Check a user's proof against the root published on chain |
-| `./wallet migrate`  | Apply pending database migrations                      |
-| `./wallet db-reset` | Drop the schema and re-apply migrations (destroys data)|
-| `./wallet psql`     | psql shell against the dev database                    |
-| `./wallet cast ...` | Run `cast` against the local chain                     |
-| `./wallet accounts` | Print the deterministic anvil test accounts            |
-| `./wallet clean`    | Drop dependency volumes but keep the database          |
-| `./wallet nuke`     | Drop every volume, database included                   |
-
-## Watching a deposit arrive
-
-```bash
-./wallet up
-./wallet deploy-token          # prints USDC_ADDRESS=0x...; paste it into .env
-./wallet indexer               # in another terminal
-
-# Signing up opens an account and signs in: the response carries a token.
-ACCOUNT=$(curl -s -X POST localhost:3000/api/v1/users -H 'content-type: application/json' \
-    -d '{"email":"a@example.com","password":"correct horse battery staple"}')
-echo "$ACCOUNT"                # note depositAddress, accountId and token
-TOKEN=$(echo "$ACCOUNT" | jq -r .token)
-
-# Send tokens to that deposit address, then watch the balance.
-./wallet cast "send $USDC_ADDRESS 'mint(address,uint256)' <depositAddress> 250000000 \
-    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-
-curl -s localhost:3000/api/v1/accounts/<accountId> -H "Authorization: Bearer $TOKEN"
-```
-
-The deposit appears first as `pendingBalance` and moves into `balance` once its
-block is final. Raise `FINALITY_CONFIRMATIONS` to watch it sit in pending for
-longer.
-
-Note that `./wallet restart` restarts anvil too, and a devnet keeps no state:
-every deployment is lost and `USDC_ADDRESS` has to be set again.
-
-## Moving money inside the ledger
-
-A balance comes only from a deposit like the one above: there is no endpoint
-that credits an account out of nothing, since nothing on chain would back it.
-Between users, money moves in the ledger alone -- free and instant.
-
-```bash
-BASE=localhost:3000/api/v1
-BOB=$(curl -s -X POST $BASE/users -H 'content-type: application/json' \
-    -d '{"email":"bob@example.com","password":"another long passphrase"}' | jq -r .accountId)
-
-# Spending needs the owner's token; receiving needs only an account id.
-curl -s -X POST $BASE/transfers -H 'content-type: application/json' \
-    -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: t-1' \
-    -d "{\"fromAccountId\":\"<accountId>\",\"toAccountId\":\"$BOB\",\"amount\":\"100000\"}"
-
-# Send the exact same request again: it returns the stored result with 200
-# instead of 201, and the money does not move twice.
-curl -s -X POST $BASE/transfers -H 'content-type: application/json' \
-    -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: t-1' \
-    -d "{\"fromAccountId\":\"<accountId>\",\"toAccountId\":\"$BOB\",\"amount\":\"100000\"}"
-
-# The ledger must always sum to zero. Admin endpoints take API_ADMIN_TOKEN.
-curl -s $BASE/admin/reconciliation -H "Authorization: Bearer $API_ADMIN_TOKEN"
-```
-
-## Paying out on chain
-
-```bash
-./wallet cast "wallet new"     # a throwaway devnet key; put it in HOT_WALLET_PRIVATE_KEY
-./wallet up                    # `restart` does NOT re-read .env; `up` recreates
-./wallet withdrawer            # in another terminal
-
-curl -s -X POST localhost:3000/api/v1/payouts -H 'content-type: application/json' \
-    -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: p1' \
-    -d '{"accountId":"5","to":"0x...","amount":"320000000"}'
-```
-
-The balance drops immediately and appears as `reservedBalance` until the chain
-settles it. The hot wallet needs both the token and some native currency for
-gas.
-
-## What P15 demonstrates
+### Layout
 
 ```
-./wallet deploy-reserves     # the registry; prints RESERVES_REGISTRY_ADDRESS
-./wallet reserves            # snapshot + publish, every RESERVES_POLL_MS
-
-curl -s localhost:3000/api/v1/reserves/latest
-curl -s localhost:3000/api/v1/reserves/<id>/proof/<accountId> -H "Authorization: Bearer $TOKEN" > proof.json
-./wallet verify-proof proof.json
+contracts/src/        Solidity: vault/, aa/ (account, factory, paymaster, guardians), reserves/
+contracts/test/       Foundry tests, *.attacks.t.sol among them
+db/migrations/        SQL, applied in filename order
+packages/shared/      Shared by backend and browser: env, HD keys, the smart-account
+                      client, the Merkle sum tree and its verifier
+services/api/src/     The API and every worker
+  auth/               Passwords, sessions, who may call what
+  ledger/             Double-entry core, idempotency, deposits and withdrawals
+  chain/              Indexer, reorgs, nonces, payouts, sweeping, rebalancing
+  vault/              Proposals, signatures, the submitter
+  aa/                 Paymaster policy and service, recovery relayer, session manager
+  graduation/         Custody to self-custody
+  reserves/           Snapshots, proofs, publishing
+  routes/             The HTTP layer
+web/                  The frontend (Vite + React) and its Playwright tests
+docker/               Dockerfiles, and the demo stack's settings
+wallet                The task runner -- the entry point for everything
 ```
 
-Two questions, answered separately.
-
-**Does the platform hold what it owes?** Assets are the token balances of every
-address it controls -- hot wallets, the vault, and every deposit address, since
-a credited deposit sits there until it is swept. Liabilities are, per user,
-their balance, their deposits not yet final, and their payouts and graduations
-not yet on chain. The hard part is reading both at one moment:
-
-| Money in motion | Handled by |
-| --------------- | ---------- |
-| A sweep, a rebalance | every balance is read at the same block, so moving tokens between the platform's own addresses changes nothing |
-| A deposit the indexer has not reached | the block is the indexer's cursor, read in the same `REPEATABLE READ` snapshot as the ledger: every deposit the ledger counts arrived by then |
-| A payout mined but not yet settled | its receipt is checked: mined by the block, it is no longer owed |
-
-What remains can only err towards a surplus. A shortfall answers 500 on the
-admin endpoint and goes to the worker's stderr.
-
-To make this honest the ledger lost its simulated bank: `POST /deposits` and
-`POST /withdrawals` credited and debited balances with nothing on chain behind
-them. Money now enters only through a deposit the indexer sees.
-
-**Is my balance in that total?** Each snapshot builds a **Merkle sum tree**:
-every node carries a hash and the total beneath it, and its hash commits to
-both. A plain Merkle tree would prove a balance is in a list, not that the
-published total is the list's sum. Here a user walking their proof to the root
-adds up every sibling's total on the way; a branch given a smaller total than it
-holds makes the hashes disagree for everyone under it, and sums are unsigned,
-so no branch hides a debt behind a negative balance.
-
-| Design choice | Why |
-| ------------- | --- |
-| A fresh random salt per user per snapshot, in the leaf | account ids are sequential; without it anyone could hash each id with each plausible balance until a leaf matched, and leaves would link across snapshots |
-| Leaves ordered by their salted hash | a leaf's position says nothing about which account it is |
-| Leaf and node hashed with different tags (and lengths) | a leaf can never be passed off as a node |
-| The root published on chain, in `ReservesRegistry` | a root served only by the API could differ for every user who asks -- each would find themselves in a tree built just for them. The registry holds one append-only sequence, the same for everybody, and accepts only the publisher's key |
-| The verifier computes the root itself | it looks that root up on chain and requires the proof's sum to equal the total published with it; the API's own claim of a root is never used |
-
-The registry checks what it can: only the publisher writes, the block must
-already exist, and the record never goes backwards in time. A shortfall is
-published like anything else -- the point is that the platform cannot choose
-which snapshots the world sees. A publication whose receipt is lost to a crash
-is found again by its root on the next pass.
-
-**Limits, stated.** A sum tree catches an understated branch only if someone
-under it checks; a test shows a user elsewhere in the tree accepting a proof
-that passes the shrunk node as a sibling. Sibling totals reveal neighbours'
-balances, though not whose. The assets figure is the platform's claim, not
-proven: anyone can re-read the hot wallet and vault at the attested block, but
-nothing proves the platform owns every address it counts, nor lists every
-deposit address publicly. A proof is handed only to its account's signed-in
-owner (since P16), so its salt stays theirs.
-
-**What testing found.** Mutations across the reserves read, the tree, the
-snapshot, the registry, the publisher and the verifier: of forty-seven,
-forty-six fail a test. Several needed a new test first -- a payout mined after
-the snapshot's block, a deposit recorded past the cursor, a salt swapped with
-the total unchanged, the right root published with the wrong total, an empty
-tree's root (shared by every empty snapshot) mistaken for another's
-publication. The survivor is equivalent: the leaf and node tags, since their
-inputs already differ in length. Left out as equivalent too: the receipt status
-check in the reserves read, since a reverted transfer emits no `Transfer`.
-The registry has 100% coverage, like every contract here.
-
-## What P14 demonstrates
-
-Graduation is the bridge between the two halves of the project: money leaves
-the ledger, crosses the chain through the hot wallet, and lands in an account
-the platform cannot touch.
-
-```
-POST /api/v1/accounts/:id/graduation   { owner }   -> AWAITING_ACTIVATION, the account's address
-   user: deploy + adopt the guardian module + name guardians, one sponsored operation
-POST /api/v1/graduations/:id/funding               -> FUNDING, the whole balance reserved
-   withdrawal worker: transfer from the hot wallet  -> COMPLETED | FAILED (refunded)
-```
-
-**Activate first, fund second.** The account's address is fixed by the user's
-key before it exists, so funds could be sent there at once -- and if the user
-lost the key before deploying, no guardian could help, because none would have
-been named yet. Funding waits until the chain shows code at the address
-answering to that key. Code there can only have come from the platform's
-factory, since CREATE2 ties an address to its deployer and bytecode.
-
-**Activation costs the user nothing.** A user arriving from custody holds no
-ether, and the account holds no tokens yet, so the paymaster policy from P11 --
-token transfers only -- would refuse to pay. The policy now also sponsors the
-owner setting up recovery: the account adopting the platform's guardian module
-(that module, on itself, nothing else) and naming at most ten guardians in it.
-Both calls are compared byte for byte with their canonical encoding; session
-keys still reach token transfers only.
-
-**A graduation is a payout.** Funding reserves the balance in
-`PENDING_WITHDRAWALS` as a `GRADUATION` withdrawal, so everything P5 built
-carries it: nonces from the database, stuck transactions replaced, abandonment
-after repeated broadcast failures. The graduation follows its payout in the same
-database transaction as the ledger movement, so it never reads `COMPLETED` while
-the balance is still reserved:
-
-| On chain | Ledger | Graduation |
-| -------- | ------ | ---------- |
-| transfer confirmed | `PENDING_WITHDRAWALS -> BANK_GATEWAY`: the liability is gone | `COMPLETED` |
-| reverted, abandoned, or no `Transfer` emitted | `PENDING_WITHDRAWALS -> user`, a `REVERSAL` | `FAILED`, the user may try again |
-
-**Races, closed by the database.** One graduation may be open per account (a
-partial unique index), so a double click cannot open two accounts for one
-balance. Funding twice at once reserves once, under an idempotency key derived
-from the graduation. A cancellation arriving while funding checks the chain is
-seen, because funding re-reads the status under a row lock -- a test holds that
-lock to land a cancellation in exactly that gap.
-
-**Custody stays open.** Graduating is not leaving: a later deposit can be
-graduated to the same account, which needs no second activation.
-
-**What the platform can do afterwards: nothing.** A test takes every platform key
-in the flow -- the hot wallet, the paymaster's signer, the deployer, the
-recovery relayer -- and has each try to move the graduated funds. Called
-directly, the account answers `OnlyEntryPoint` (execute, batch, sessions,
-module) or `OnlyOwnerOrRecovery` (ownership). Through the EntryPoint, the
-paymaster's policy sees a token transfer from a known account and agrees to pay
--- and the account still rejects the signature (`AA24`). Starting a recovery
-without guardians' approvals fails `SignatureCountMismatch`. The balance and the
-owner are unchanged.
-
-**Hard to test, so tested on purpose.** An on-chain revert needs a transfer that
-passes estimation and then fails. anvil estimates against pending state, so
-queuing a draining payout first only makes the graduation fail to broadcast.
-Instead, the hot wallet grants an allowance in setup, and once the graduation is
-broadcast a `transferFrom` with a higher tip takes the tokens in the same block,
-ahead of it.
-
-**What testing found.** Mutations were run over funding, settlement and the
-policy. One survived until a test landed a cancellation mid-funding; another
-showed the policy refusing a stray module call only by accident -- the call
-decoded as `setRecoveryModule` and its address failed the guardian count --
-so module calls are now decoded against `setGuardians` alone. Of twenty-two
-mutations, twenty-one fail a test; the last, a `FUNDING` guard on the status
-update, is equivalent, since a graduation with a payout in flight is always
-funding.
-
-**Who may graduate.** Since P16, only the account's signed-in owner: anyone
-else is answered 404, as if the account or the graduation did not exist.
-
-## What P13 demonstrates
-
-A session key is a second key the owner signs into the account through an
-ordinary operation:
-
-| Bound | Example |
-| ----- | ------- |
-| Time | valid for the next 24 hours |
-| Scope | only `transfer` on USDC, recipient must be X, amount at most 50 |
-| Total | at most 100 USDC, and no ether, across the whole session |
-
-Leaking one costs at most what its limits allow. The owner keeps full power and
-can revoke a session at any time.
-
-**Scope is checked in validation, the total in execution.** Permissions are a
-list of `(target, selector, conditions)`, a condition being "argument *n* is
-equal to / at most / at least a value", so an operation outside them is refused
-before it costs anything. The running total is counted when the call runs: an
-operation past the cap reverts there, though the gas for trying is spent.
-
-**Counting in execution needs the whole operation.** The EntryPoint validates
-every operation in a bundle before executing any, so remembering "a session is
-acting" in storage during validation would be overwritten by the next
-operation's validation before this one runs -- a hostile bundler could arrange
-exactly that. Sessions act only through `executeUserOp` (EntryPoint v0.8's
-`IAccountExecute`), which hands execution the full operation -- signature
-included. Tests put two session operations in one bundle, and an owner's
-revocation ahead of a session operation the bundler already validated; both are
-stopped.
-
-**The signature names the session.** A session's signature is its address, then
-its ECDSA signature: `[address, 20 bytes][signature, 65 bytes]`; the owner's is
-the bare 65 bytes. The first design recovered the session from the signature in
-execution, and the end-to-end test through a real bundler broke it: to estimate
-gas, a bundler simulates with a placeholder signature, which recovers to nobody
--- so execution found no session, reverted, and no session operation could ever
-be estimated. Foundry and the ERC-7562 tests both used fixed gas and never
-noticed. Stated in the signature, the session is charged correctly whatever the
-signature; validation has already proved the signature is that session's
-before anything executes.
-
-**The clock and the storage follow ERC-7562.** Validation may not read
-`block.timestamp`, so the session's window goes back to the EntryPoint in
-`validationData` -- which treats the `validAfter` second itself as not yet due.
-Session data lives in the account's own storage: a separate module's nested
-`mapping(account => mapping(key => ...))` would not count as storage associated
-with the sender, and real bundlers would refuse the operation.
-
-**What a session can never reach.** The account itself (new sessions, owner,
-recovery module), the EntryPoint (its deposit and nonces), and the recovery
-module -- even if the owner grants a permission on one by mistake. A capped
-token moves only through `transfer` and `approve`, both counted; an unlimited
-approve would otherwise hand the balance to the spender outside the cap.
-
-**What testing found.** A transfer cut short of its amount would have its amount
-read from beyond the call data -- typically zero, so uncounted. A standard token
-reverts on that call, which hid the gap; a test with a token that tolerates it
-showed the transfer going through, and a capped token's calls must now carry
-their full arguments. Two more mutations survived until tests granted
-permissions on the forbidden targets on purpose. Of twenty-one mutations,
-twenty fail a test; the twenty-first is equivalent, since a revoked session has
-no permissions left to match. Coverage is 100% for every contract.
-
-### The session manager
-
-```
-./wallet session-manager
-POST   /sessions                  create a key for an account; returns the addSession call for the owner
-POST   /sessions/:id/operations   spend with it: { to, value, data, sponsored }
-GET    /sessions/:id
-DELETE /sessions/:id              shred the key; returns the revokeSession call for the owner
-```
-
-An app or a bot that should act on an account without its owner's key gets a
-session the owner grants. The session manager holds the key so the app never
-does: the app holds a bearer token, and asks.
-
-| Concern | Answer |
-| ------- | ------ |
-| Where the key lives | its own process, apart from the API |
-| At rest | AES-256-GCM under a master key only in its environment; a random IV per key; the account and session address as authenticated data, so a ciphertext swapped onto another row does not open |
-| Who may ask | only callers presenting the bearer token, compared in constant time; whoever holds it can spend within every session's limits |
-| Database leaked | ciphertext only |
-| Database and master key leaked | the keys -- still bounded by every session's scope, cap and expiry on chain, which is the point of a session |
-| Revoking | the ciphertext is deleted at once -- not even the service can sign again -- and the `revokeSession` call is returned for the owner, since only that stops everyone |
-| Expiry | keys of expired sessions are shredded on a timer |
-| Wasted gas | the cap is enforced in execution, so a call past it would revert at a cost; the service reads what is left on chain and refuses first |
-
-Granting is the owner's act, from their own wallet: the service only returns the
-`addSession` call. It notices on its own when the owner revokes on chain, and
-shreds its copy. The paymaster's policy now also covers `executeUserOp`, with
-the same rules, so a session operation can be sponsored: tests drive an app
-spending through the service, gas paid by the paymaster, the account's ether
-untouched.
-
-### ERC-7562, enforced
-
-```
-./wallet test-node erc7562   # geth dev chain + the reference bundler in safe mode
-```
-
-A bundler simulates `validateUserOp` before accepting an operation. If
-validation read the clock, or another contract's storage, the operation could
-pass simulation and fail on chain -- and one transaction could invalidate
-thousands of operations in the mempool at once. ERC-7562 forbids both, and real
-bundlers enforce it by tracing every operation.
-
-anvil cannot trace the way that needs, so the `erc7562` profile runs a **geth
-dev chain** -- which ships the CREATE2 deployer and the tracer -- with the
-canonical EntryPoint and the **reference bundler** from the authors of ERC-4337
-and ERC-7562, in safe mode. Tests go both ways:
-
-| Operation | Verdict |
-| --------- | ------- |
-| Owner's first operation, deploying the account through the factory | accepted |
-| Owner granting a session, then the session key transferring within its rules | accepted |
-| An account that reads `block.timestamp` while validating | refused, `OP-011` banned opcode |
-| An account that reads another contract's storage (someone's token balance) | refused, `STO-010` unstaked access |
-
-The refusals are what make the acceptances mean something: a "safe mode" that
-let those through would not be checking anything.
-
-**Why not Alto.** It was tried first. Its safe mode routes the simulation
-through a helper contract and the EntryPoint's `delegateAndRevert`, and its
-tracer does not record the outermost call frame -- so it decodes the
-EntryPoint's `DelegateAndRevert(true, result)` instead of the result inside, and
-refuses every v0.8 operation, compliant or not. The trace showed the account's
-validation had in fact succeeded. Alto still serves the main stack, where safe
-mode is off.
-
-## What P12 demonstrates
-
-A smart account with one owner is lost with its key: nothing can be upgraded,
-and nobody can step in. **Social recovery** lets the owner name guardians in
-advance -- friends, a second device, the platform -- a quorum of whom can hand
-the account to a new key:
-
-```
-guardians sign (3 of 5) -> initiateRecovery(newOwner) -> 48h -> executeRecovery() -> new owner
-                                                          |
-                                                          +- the owner (key still works) or a
-                                                             guardian quorum may cancel
-```
-
-**The delay is what stops colluding guardians.** If the owner still has the
-key, the recovery was never needed, and they have 48 hours to veto it with a
-signed operation. A test has three guardians try to take the account and the
-owner cancel. Guardians can also withdraw a recovery they started, by the same
-quorum signing over its nonce -- so that cancellation cannot be replayed later
-against a different recovery.
-
-**A module with exactly one power.** Recovery lives in `GuardianModule`, one
-contract serving every account. The account trusts it with `transferOwnership`
-and nothing else: not a general module system that could make the account call
-anything, which would be a second owner. The owner chooses the module, and can
-remove it, only through their own signed operations.
-
-**The vault's signature rules, reused.** Guardians sign EIP-712 approvals
-off-chain, so they need no ether; anyone submits them. Exactly a quorum,
-strictly ascending by signer, bound to the account, the chain and a nonce that
-every recovery, cancellation and change of guardians spends. Changing guardians
-also cancels a recovery in progress, so approvals from removed guardians cannot
-complete it. A matured recovery lapses after seven days.
-
-**What it does not do.** Recovery protects against a lost key, not a stolen one:
-a thief with the key can move the funds at once, without waiting for anyone.
-
-**What testing found.** Removing the nonce increment when a recovery starts
-survived every test: the approvals' one-hour deadline expired before the 48-hour
-delay ended, so expiry masked the gap. With a long deadline, the same approvals
-could start a second recovery after the first completed. A test now holds
-approvals to a single use. And `forge coverage` compiles without the optimiser:
-the account had grown enough that deploying it from initCode ran out of the
-test helper's verification gas, which first looked like a collapse in coverage.
-
-Coverage is 100% for every contract; fifteen mutations to the recovery
-defences each fail a test.
-
-### Approvals over the API, and a relayer
-
-```
-POST /api/v1/recovery/requests                   open a request; returns the typed data guardians sign
-POST /api/v1/recovery/requests/:id/approvals     a guardian's approval
-POST /api/v1/recovery/requests/:id/cancellation  open a guardians' cancellation of a started recovery
-POST /api/v1/recovery/requests/:id/cancellations a guardian's vote to cancel
-GET  /api/v1/recovery/requests/:id               status, signers, executable time
-./wallet recovery-relayer                         starts, executes and cancels on chain
-```
-
-**Several requests may collect at once.** Anyone may open a request -- only
-guardian signatures count -- so "one open request per account" would let a
-stranger block a genuine recovery with a bogus one until its deadline passed.
-Whichever request starts first spends the module's nonce; the rest become
-`STALE`, which a test shows with two competing requests.
-
-**The relayer's key only pays gas.** Guardians' signatures authorise every step,
-and the module checks them again on chain. It is still a key, so it runs apart
-from the API and is checked against every other signer.
-
-**The module is the record.** A veto the owner sends from their own wallet, or a
-cancellation guardians submit themselves, never passes through the relayer; it
-reads the module's pending recovery every pass and notices it is gone. A moved
-nonce is checked against the module before a request is called stale, so a
-start whose receipt was lost is recognised -- the same lesson as the vault's.
-
-**After recovery the account keeps its address.** The factory derives addresses
-from the owner an account was created with, so the account adapter takes an
-explicit address for an account whose owner has since changed; a test has the
-new key send a UserOperation through the bundler.
-
-Mutation testing covers the relayer and the request checks as well as the
-contracts.
-
-## What P11 demonstrates
-
-A smart account still pays its own gas, in ether -- which a user holding only
-USDC does not have. A **paymaster** pays instead, out of its deposit in the
-EntryPoint. That deposit is the platform's money, so the paymaster pays only for
-an operation carrying the platform's signature over *that exact operation*:
-
-```
-wallet -> sponsorship service: "will you pay for this?"   (policy decides)
-       <- signature over the operation, valid until T
-wallet -> bundler -> EntryPoint -> VerifyingPaymaster checks the signature, pays
-```
-
-**The sponsorship covers everything that sets the bill.** The paymaster pays up
-to gas limit times fee, so the signed EIP-712 struct includes the account's gas
-limits, `preVerificationGas`, the fees and the paymaster's own gas limit, along
-with the sender, nonce, initCode and call. Raising any of them after the sponsor
-signs -- tested one by one -- invalidates the sponsorship.
-
-**Every sponsorship expires.** ERC-4337 reads a `validUntil` of zero as
-"forever"; this paymaster treats it as a failed signature, so a bug in the
-service cannot mint a sponsorship that never runs out. The time range itself is
-enforced by the EntryPoint (`AA32`), since validation may not read the clock.
-
-**Validation reads only immutables.** ERC-7562 restricts what a paymaster may
-read while validating, and bundlers throttle one that breaks the rules. The
-signer is fixed at deployment; rotating it means deploying a new paymaster.
-
-**Deposit and stake are separate.** The deposit pays for gas; the stake is
-locked collateral bundlers look at before trusting a paymaster, returned only
-after an unstake delay. Only the owner (`Ownable2Step`) can withdraw either.
-
-Fourteen attack tests -- a stranger's sponsorship, a swapped call, reuse for the
-next nonce, raised gas or fees, expired, not yet valid, never expiring, another
-chain, another paymaster, truncated data, an empty deposit, an outsider
-withdrawing -- and 100% coverage. Of thirteen mutations, twelve fail a test; the
-thirteenth is equivalent because the signer can never be the zero address.
-
-### The sponsorship service
-
-```
-./wallet deploy-aa    # factory + paymaster on the local chain; prints their addresses
-./wallet paymaster    # the ERC-7677 service, holding the sponsor's key
-```
-
-**ERC-7677, not a bespoke API.** The service answers `pm_getPaymasterStubData`
-and `pm_getPaymasterData` over JSON-RPC, so any wallet or SDK that speaks the
-standard -- viem's paymaster client included -- uses it unchanged. The stub
-lets the bundler estimate gas with a placeholder signature; only the second
-call signs.
-
-**Its own process, because its key spends money.** A sponsorship spends the
-paymaster's deposit, so the sponsor key is a spending key in all but name. It
-runs apart from the API, is checked against every other signer for reuse, and
-the service refuses to start if the deployed paymaster trusts a different key.
-
-**The policy, before anything is signed:**
-
-- the sender is an account the platform registered;
-- deployment only through the platform's own factory;
-- only `transfer` of the platform's token, alone or batched, no ether attached,
-  no trailing bytes -- a paymaster pays even when a call reverts, and pays for
-  whatever a call does, `approve` to a stranger included -- and, since P14, the
-  owner setting up recovery when the account is activated;
-- the paymaster gas limits are exactly the ones offered;
-- and the operation's most expensive case, every gas limit times the max fee,
-  fits under the account's rolling daily cap.
-
-**The cap counts promises, not receipts.** A signed sponsorship can be spent
-whether or not the wallet ever sends it, so what counts is the signature. One
-nonce can only execute once, though, so asking again for the same nonce -- a
-wallet retrying -- replaces the earlier promise instead of counting twice; a test
-fills the cap exactly, retries, and is still served. Requests for one account are
-serialised with a row lock, so two arriving together cannot both squeeze under a
-cap only one fits.
-
-## What P10 demonstrates
-
-A smart account is a contract that is a wallet: the user signs a
-`UserOperation`, a bundler submits it to the EntryPoint, and the EntryPoint asks
-the account whether the signature is good before letting it act.
-
-```
-user signs UserOp -> bundler -> EntryPoint.handleOps()
-                                  1. account.validateUserOp()  checks the signature, pays for gas
-                                  2. account.execute(...)      does the work
-```
-
-**EntryPoint v0.8, pinned for good.** The `UserOperation` layout and its hash
-differ between versions; an account built for one does not work with another.
-`./wallet install-forge` pins `eth-infinitism/account-abstraction` at v0.8.0 the
-same way it pins OpenZeppelin. In v0.8 the `userOpHash` is an EIP-712 digest
-over the operation, the EntryPoint and the chain, which is what makes a
-signature worthless anywhere else -- tests replay one across chains, accounts
-and EntryPoints.
-
-**The address exists before the account does.** The factory deploys with
-CREATE2 and the owner is part of the constructor arguments, so
-`getAddress(owner, salt)` is known up front. Funds can arrive there first; the
-owner's first operation carries `initCode`, deploys the account, and pays for
-its own deployment out of what is already there.
-
-**A bad signature is a verdict, not a revert.** `validateUserOp` uses
-`tryRecover` and returns `SIG_VALIDATION_FAILED`, so a bundler simulating an
-operation -- or estimating gas with a placeholder signature -- gets an answer
-instead of an error.
-
-**Only the EntryPoint's SenderCreator may deploy.** Anyone deploying a victim's
-account first could not take it -- the owner is fixed by the address -- but
-would make the owner's first operation fail with `AA10`.
-
-**Not upgradeable.** An upgrade path is a second way to take an account over,
-and an owner can always move funds to a new one.
-
-**A mutation found a real gap.** Dropping the recover-error check survived the
-tests, because a malformed signature recovers to the zero address and no test
-account was owned by it. Nothing stopped one from being: an account owned by
-the zero address would have answered to anyone sending garbage, guarded by that
-single check. The constructor now rejects it. Twelve attack tests and 100%
-coverage; of nine mutations, eight fail a test and the ninth is now equivalent.
-
-### Through a real bundler
-
-`docker compose` now runs Alto, Pimlico's bundler, next to anvil, and the
-backend sends UserOperations to it with viem's bundler client:
-
-```
-./wallet test-node aa   # first UserOperation deploys the account and pays USDC
-```
-
-**The EntryPoint is the canonical one, at its canonical address.** Alto
-recognises an EntryPoint's version by its address, so a fresh compile deployed
-anywhere else is not served at all. `entrypoint-setup` replays the mainnet
-deployment instead: the reference repository's own artifact, the salt from the
-mainnet transaction, sent through the CREATE2 deployer anvil ships with. The
-salt was checked locally -- with that artifact it yields exactly
-`0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108` -- and the script verifies the code
-is there afterwards rather than trusting the transaction.
-
-**Safe mode is off on anvil.** Alto enforces ERC-7562 -- what `validateUserOp`
-may read and write -- by tracing every operation, and anvil lacks the tracer it
-needs. P13 closes the gap with a second chain where the rules are enforced; see
-below.
-
-**Nonces run in one sequence.** An ERC-4337 nonce is a 192-bit key plus a
-64-bit sequence. viem draws a fresh time-based key for every operation by
-default, so each is first in its own sequence and they may land in any order.
-For a wallet, where one payment can depend on the one before, the account
-adapter pins the key to 0. A test caught this: the second operation's nonce came
-back as a timestamp, not 1.
-
-**A forged signature never reaches the chain.** The bundler simulates before
-accepting, the account reports the bad signature, and the operation is refused
-with `AA24` -- nothing deployed, nothing spent.
-
-## What P9 demonstrates
-
-**The digest is computed off-chain and checked against the contract.** Owners
-sign what the service computes, and a test compares it to the vault's own
-`hashExecute`. If they ever disagreed, every signature collected would be
-rejected on submission -- after the owners' time had already been spent.
-
-**Every check the vault makes is repeated before a signature is accepted.**
-Signer must be an owner, must not have signed already, and the signature must be
-65 bytes with `s` in the lower half. Skipping any of them would not make the
-vault unsafe -- it would still refuse -- but a proposal would look ready when
-its submission was certain to fail.
-
-**Proposals are tied to a vault nonce.** Every execution consumes one, so a
-proposal is valid for exactly one position in the queue. Only one may collect
-per nonce, and one whose nonce the vault has moved past is marked stale: those
-signatures can never be used, however many times they are retried.
-
-**There is no "failed" state.** A reverted `execute` reverts the vault's nonce
-too, so the approval stays valid and can be resubmitted until its deadline.
-
-**Wei does not fit in a BIGINT.** Postgres BIGINT tops out near 9.22 * 10^18,
-about 9.22 ether, so a ten-ether reserve transfer would overflow it. The value
-column is `NUMERIC(78, 0)`, wide enough for any uint256, and a test moves ten
-ether through it.
-
-**Deadlines are measured in chain time.** The vault compares against
-`block.timestamp`, so that is the clock the service consults, and tests reach a
-deadline with `evm_increaseTime` rather than by sleeping.
-
-**Recording a status and raising an error are separate steps.** The first
-version marked a proposal stale inside a transaction and then threw, which
-rolled the mark back: the caller heard "stale" while the row still said
-"collecting". The status now commits first. The same mistake was in the expiry
-path, which had no test until this was found.
-
-Mutation checks confirm each of those guards is load-bearing: removing the
-low-s check, the owner check, the signer sort, or the nonce check each fails a
-test, as does putting the expiry throw back inside the transaction.
-
-### Over HTTP
-
-| Endpoint | Purpose |
-| -------- | ------- |
-| `POST /api/v1/vault/proposals` | Open a proposal; returns the `eth_signTypedData_v4` JSON for owners |
-| `GET /api/v1/vault/proposals/:id` | Status, signers so far, and the typed data for late signers |
-| `POST /api/v1/vault/proposals/:id/signatures` | An owner submits a signature |
-| `POST /api/v1/vault/proposals/:id/retry` | Hand a failed proposal back to the submitter |
-
-**There is no submit endpoint.** Submitting costs gas, so it needs a key, and
-the API server holds none. `./wallet vault-submitter` submits whatever has
-reached its quorum. Its key only pays gas -- the owners' signatures authorise
-the transfer -- but it is refused if it equals the hot wallet's key, whose
-nonces the withdrawal worker allocates itself.
-
-**The routes need no login to be safe.** Anyone may propose; a signature is
-accepted only if it recovers to a vault owner, and the vault checks every one
-again on chain. A real deployment would still put proposing behind
-authentication, to keep the queue free of noise.
-
-**A failed submission is not retried automatically.** Whatever made the vault
-revert -- usually too little balance -- will still be true a few seconds later,
-and a worker that kept trying would spend gas every pass to learn nothing. The
-reason is recorded on the proposal and a person clears it with `/retry`.
-
-**A lost receipt is not mistaken for a stale proposal.** If the submitter
-broadcasts and then loses its connection before recording the hash, the next
-pass finds the vault's nonce moved. Before calling the proposal stale it looks
-for the vault's `Executed` event at that nonce, and if the call matches, records
-the proposal as executed with that transaction.
-
-**Integers travel as strings, including in the typed data.** A wei amount does
-not survive a JSON number, and a test hashes the JSON exactly as a wallet would
-receive it and compares it to the contract's own digest.
-
-### The timelock
-
-Whoever steals a quorum of keys could empty a plain multisig in one
-transaction. The vault now refuses to do that at once:
-
-```
-                    +- hot-wallet top-up within today's allowance -> execute now
-quorum of owners ---+
-                    +- anything else -> queue -> wait `delay` -> executeQueued
-                                           |
-                                           +- any ONE owner may cancel meanwhile
-```
-
-**It is enforced on chain.** A delay kept by the backend protects nothing: a
-thief holding the keys calls the contract directly.
-
-**One owner can cancel.** If a thief holds a quorum, the honest owners left are
-by definition fewer than one. A cancel that needed a quorum would never come.
-The price is that a rogue owner can stall calls -- stall, never move funds.
-
-**The fast path recognises exactly two shapes:** ether to the hot wallet, and a
-token's own `transfer(hotWallet, amount)` with no ether attached and no trailing
-bytes. `approve`, `transferFrom`, transfers to anyone else, and every call to the
-vault itself wait. Each token has its own daily allowance.
-
-**Allowances are daily, not per call.** A per-call cap only changes how many
-transactions a thief needs; a test splits a drain into fifty small top-ups and
-gets exactly one day's allowance out.
-
-**Configuration goes through the timelock too.** Changing the hot wallet, an
-allowance or the delay is a call the vault makes to itself, which is never
-fast-path. A thief cannot raise the allowance and use it in the same breath.
-
-**A queued call does not block the queue.** The nonce is spent when a call is
-queued, so a payout waiting out its delay does not hold up the top-ups behind
-it. A queued call expires 14 days after it matures.
-
-**A delay of zero switches the timelock off** -- which is how the older suites
-deploy it, so they keep testing the multisig on its own.
-
-**The backend asks the vault rather than copying its rules.** The submitter
-tries `execute`; if the vault answers `TimelockRequired`, it queues instead. A
-second copy of the fast-path rules in TypeScript could only ever disagree with
-the contract. A queued proposal then moves through the same worker:
-
-| Status | Meaning |
-| ------ | ------- |
-| `QUEUED` | The vault spent the nonce and holds the call until `eta` |
-| `EXECUTED` | `executeQueued` ran it after the delay |
-| `CANCELLED` | An owner cancelled it on chain |
-| `EXPIRED` | Nobody executed it within the 14-day grace period |
-
-**Cancelling is an owner's own transaction.** The vault accepts `cancel` only
-from an owner, and the backend holds no owner key, so `GET` on a queued proposal
-returns the exact call to send from an owner's wallet. The submitter checks the
-vault's queue on every pass and records the cancellation when the entry is gone.
-
-**A lost receipt is recognised for queueing too.** If the vault's nonce moved
-and it holds a `Queued` event for this proposal's call, the proposal is
-recorded as queued with that transaction, not as stale.
-
-Coverage stays at 100% of lines, statements, branches and functions. Of fourteen
-mutations to the new defences, thirteen fail a test outright. The fourteenth --
-dropping the reentrancy guard from `executeQueued` -- survives because the
-queued entry is already deleted before the external call; removing both fails
-the reentrancy attack test, so each layer holds on its own.
-
-### Hot/cold rebalancing
-
-The hot wallet's key is online, so what it holds is what a breach costs; but a
-hot wallet that runs dry stalls every payout. Rebalancing keeps its
-*available* balance -- on chain, minus payouts already promised -- inside a
-band set by three marks:
-
-```
-  above HIGH  -> the withdrawal worker returns the excess to the vault
-  ---- TARGET   (where a rebalance in either direction lands)
-  below LOW   -> the vault submitter proposes a top-up for owners to sign
-```
-
-**Two marks, not one.** A balance hovering around a single threshold would
-rebalance on every pass, each time costing gas or an owner's signature.
-Between LOW and HIGH nothing happens.
-
-**A top-up is proposed, never signed.** Moving reserves out of the vault takes
-owners' signatures; a process signing for them would make the multisig a
-formality. The proposal is sized to the vault's daily fast-path allowance, so
-the signatures are all it takes -- no timelock wait while payouts stall. It is
-refused outright if the vault's `hotWallet()` is not the account the withdrawal
-worker registered.
-
-**A return rides the payout machinery.** Sending from the hot wallet needs the
-hot wallet's key, and only the withdrawal worker may use it. So the return is a
-`chain_withdrawals` row of kind `REBALANCE`, getting the same nonce allocation,
-stuck replacement and abandonment as a payout -- but no account and no ledger
-entries, which the schema enforces both ways. The platform moving its own
-tokens changes nobody's balance.
-
-**Reconciliation had to learn the difference.** It compared every in-flight
-withdrawal against `PENDING_WITHDRAWALS`. A rebalance reserves nothing there, so
-counting it would report a healthy ledger as unbalanced; a test checks the
-ledger reconciles while a return is in flight. Seven mutations to these
-defences each fail a test.
-
-## What P8 demonstrates
-
-`contracts/test/vault/MultisigVault.attacks.t.sol` holds one test per attack:
-one signature repeated as a quorum, outsiders forming a quorum (fuzzed),
-malleated signatures, the all-zero signature, the 64-byte compact encoding, a
-signature obtained through `personal_sign`, cross-chain replay, cross-vault
-replay, a future nonce submitted early, reentrancy with the same approval, a
-front-runner submitting the approval, and a vault with no owners.
-
-**Each defence was removed on purpose to see which attack got through.**
-
-| Defence removed                        | Attacks that then get through             |
-| -------------------------------------- | ----------------------------------------- |
-| Strictly ascending signers             | one signature repeated as a quorum        |
-| OpenZeppelin `ECDSA.recover` -> raw `ecrecover` | malleated signature executes; zero and compact signatures change how they fail |
-| Chain id and contract in the domain    | cross-chain replay, cross-vault replay    |
-| Reentrancy guard *and* nonce-before-call | the same approval spent twice           |
-
-**Some defences are layered, and the tests say so rather than pretend
-otherwise.** Removing only the reentrancy guard, or only the
-nonce-before-call ordering, lets nothing through: each on its own is enough to
-stop the same approval being spent twice, so the test fails only when both go.
-Likewise, with raw `ecrecover` the all-zero signature is still refused -- by the
-ascending-order check, since it recovers to the zero address -- and the compact
-encoding by an out-of-bounds read. Those are incidental backstops, not designs;
-OpenZeppelin is the intended defence.
-
-**Malleability is defence in depth here, not the last line.** A malleated
-signature recovers to the same owner, so with raw `ecrecover` it executes
-exactly what that owner approved. It becomes a theft vector only in contracts
-that key state on signatures -- "has this signature been used?" -- which this
-vault deliberately does not. Rejecting it anyway costs nothing.
-
-## What P7 demonstrates
-
-**The multisig logic is ours; the dangerous primitives are not.** Threshold,
-signer ordering, the nonce and the signed struct are written here, because that
-is the part worth understanding. Signature recovery, the EIP-712 domain and the
-reentrancy guard come from OpenZeppelin v5.7.0, pinned: recovering a signature
-without rejecting malleable ones, or building an EIP-712 domain by hand, is the
-class of mistake that has drained real vaults.
-
-**Signers must be strictly ascending.** That is what makes them distinct.
-Without it, one owner's signature repeated three times would satisfy a 3-of-5
-quorum. The ordering also rules out duplicates without a second loop or a
-storage write.
-
-**Everything that decides what the call does is signed.** Target, value,
-calldata, nonce and deadline are all in the struct, so whoever submits the
-transaction cannot alter any of them after the owners approved it. A test tries
-to send five ether with signatures for one.
-
-**The domain binds the chain and the contract.** A signature collected for one
-vault, or on one chain, is worthless anywhere else. A test recomputes the digest
-independently, the way an off-chain signer would, and checks it matches.
-
-**A failed call does not spend the approval.** It reverts everything, the nonce
-included, so the same signatures can be retried -- once the vault is funded, say
--- until the deadline passes.
-
-**The vault cannot judge success for its target.** A generic call to an ERC-20
-that signals failure by returning false will look like a success. The return
-data is surfaced so whoever proposes a transfer can check it, the same lesson as
-the payout worker checking for a `Transfer` event.
-
-Every line, statement, branch and function of the vault is covered.
-
-## What P6 demonstrates
-
-**Deciding and acting are separate.** The planner reads balances and returns a
-verdict per address. Nothing signs, so the decision can be inspected -- and got
-wrong -- without moving anyone's funds.
-
-**Sweeping dust destroys value.** An ERC-20 transfer costs gas whether it moves
-a million tokens or five, so below a threshold the tokens are better left where
-they are. Judging that properly means comparing a token amount against a
-native-currency cost, which needs a price feed this project does not have; the
-threshold is the honest stand-in, and the estimate is reported so an operator
-can revisit it.
-
-**A deposit address cannot pay its own way.** It receives tokens and nothing
-else, so it holds no native currency and the sweep costs two transactions: fund
-it, then transfer. The estimate says which case an address is in.
-
-**Tests get their own derivation range.** The chain outlives the database, so a
-test that funds an address leaves it funded for every later run. A fixed index
-made the suite pass once and fail from the second run onward, which is how this
-was found.
-
-**The sweeper holds the mnemonic, so it runs nowhere near the API.** Moving
-funds that have arrived at a deposit address requires the key for that address,
-which means the phrase every deposit address is derived from. That is the most
-dangerous secret in the system, so it lives in its own process -- the API server
-still holds nothing that can spend.
-
-**Every signing process has its own account.** The sweeper first paid gas
-from the hot wallet, letting the node pick the nonce, while the withdrawal
-worker handed out the same account's nonces from the database. Running both,
-a gas funding could take a nonce a payout had been promised, and the payout
-failed for no reason it could explain. The sweeper now pays gas from
-`GAS_FUNDER_PRIVATE_KEY`, and the withdrawer, sweeper and vault submitter all
-refuse to start if any two of their keys are the same account. As a side
-effect the sweeper no longer holds a key that can spend the hot wallet's
-tokens: it reads the hot wallet's address from the row the withdrawal worker
-registered, and warns when fewer than ten gas fundings are left.
-
-**A mismatched mnemonic is caught before anything is signed.** A phrase that
-does not match the deployed xpub derives a perfectly valid key for a completely
-different address. Signing would succeed, the transaction would be accepted, and
-the tokens would sit untouched while the wallet reported success. Every
-derivation is checked against the address the xpub produced; removing that check
-fails a test.
-
-**Sweeping is stateless, and deliberately so.** It moves tokens between two
-addresses the wallet already controls, so no user's balance changes and there is
-nothing to record -- the deposit was credited when it arrived, and where the
-tokens physically sit afterwards is a custody detail. Re-reading balances every
-pass makes a crash halfway harmless: the next run simply picks up what is left.
-
-**One failing address does not strand the rest.** A single unsweepable deposit
-holding up every other user's funds would be worse than the failure itself, so
-failures are collected and reported rather than thrown.
-
-**Nonces come from the database, not the chain.** Two workers that both call
-`eth_getTransactionCount` receive the same answer, sign two transactions with
-the same nonce, and the node keeps one -- the other withdrawal disappears with
-no error anywhere. Postgres can serialise the request; the chain cannot.
-
-**Allocation is a single `UPDATE ... RETURNING`.** Postgres holds the row lock
-for the duration of one statement, so callers are serialised without explicit
-locking. Reading the nonce and writing back `nonce + 1` as two statements
-reintroduces exactly the race the table exists to remove, and doing so fails two
-of these tests.
-
-**A rollback returns the nonce.** Gaps are worse than duplicates: a nonce that
-is allocated but never broadcast blocks every transaction queued behind it.
-Allocation therefore happens inside the caller's transaction, so a withdrawal
-that fails after allocating does not consume one.
-
-**The counter is never wound backwards.** Running ahead of the chain is normal
-while transactions are in flight, and "correcting" it would reissue nonces
-already sitting in the mempool. Sync only ever moves forward, for the case where
-the key was used by something this database does not know about.
-
-**A successful receipt is not proof that anything happened.** A call to an
-address holding no code succeeds trivially -- there is no code to revert -- so a
-misconfigured token address produces a healthy receipt with an empty log list
-while no tokens move at all. The worker therefore checks the receipt for a
-matching `Transfer` event before settling, and the CLI refuses to start if
-nothing is deployed at the configured token address. Without that check the
-ledger records payouts the chain never made.
-
-**Destination addresses are checksummed at the API boundary.** viem rejects a
-mixed-case address with a bad EIP-55 checksum, and it rejects it at signing
-time -- deep inside the worker, after a nonce has already been committed to the
-row. That transaction can then never be broadcast and every later nonce queues
-behind it. Rejecting it with a 400 costs the caller nothing and costs the queue
-nothing.
-
-**A withdrawal that cannot be sent is abandoned, not retried forever.** After a
-few failed broadcasts the worker spends the nonce on an empty self-transfer,
-refunds the user, and lets the queue move. A nonce held by a transaction that
-will never exist is the worst state this system can reach.
-
-**Stuck transactions are replaced at the same nonce.** A replacement must reuse
-the nonce it is replacing, which is why the nonce lives on the row. The fee is
-raised by more than the 10% nodes demand, because one underpriced withdrawal
-freezes every later one behind it.
-
-**Funds are debited on request, not on settlement.** They wait in
-`PENDING_WITHDRAWALS`, so the same balance cannot be spent twice while a
-transaction is in flight, and a refund is always funded -- it moves money out of
-a system account rather than inventing it.
-
-## What P4 demonstrates
-
-**Reorgs are induced, not simulated.** `anvil_reorg` rewrites real blocks, so
-the tests exercise the same conditions a live chain produces: a height keeps its
-number and receives a new hash. Removing the hash comparison from the detector
-and leaving a height check in its place fails two of these tests every run.
-
-**Block data must not be cached.** viem holds block reads for its polling
-interval by default. That is a good default and precisely wrong here: after a
-reorg the cache keeps serving the old hash, so the check compares a stale hash
-against itself and concludes nothing changed -- silently leaving deposits from a
-replaced block credited forever. `createChainClient` sets `cacheTime: 0` for
-every service, and the tests use that same constructor so they cannot pass
-against a client configured differently from production.
-
-**Detection reports; reversal acts.** They are separate functions so detection
-can be exercised on its own and a bug in reporting cannot move money by itself.
-
-**Reversal takes nothing from anyone.** A reorged deposit is still parked in
-`PENDING_DEPOSITS`, so returning it to the gateway touches no user account. This
-is the payoff of the two-step deposit introduced in P3.
-
-**A confirmed deposit is not clawed back automatically, and that is deliberate.**
-Its funds are in a user account and may already be spent, so an automated
-reversal would either fail or push a real person negative. The indexer reports
-it for manual review on every pass instead. It should also never happen:
-confirmation waits for finality, and a finalised block being replaced means
-something far worse than routine churn.
-
-**The cursor rewinds, which is why `advanceCursor` refuses to.** Rewinding is
-correct in exactly one situation, so it is a separate, explicitly named
-operation that a stale scan result cannot trigger by accident.
-
-**Reconciliation checks where the money is, not just that it sums to zero.** A
-reversal that marks a deposit reorged but forgets to move the funds leaves the
-total at zero and every cached balance accurate, while the amount stranded in
-the system account quietly grows. So reconciliation also asserts that
-`PENDING_DEPOSITS` holds exactly what the still-pending deposits are owed --
-an invariant that catches a class of bug the first two checks are blind to.
-
-## What P3 demonstrates
-
-**The scanner asks the node to filter, not JavaScript.** `fetchIncomingTransfers`
-passes the watched addresses as the indexed `to` topic, so the response stays
-small however busy the token is. It also short-circuits an empty address list:
-an empty topic filter matches *every* transfer rather than none, so a wallet
-with no accounts would otherwise ingest the token's entire traffic.
-
-**Scanning happens in bounded chunks.** Nodes cap how many blocks one
-`eth_getLogs` may span. A test scans the same range whole and one block at a
-time and asserts both produce an identical set, so the chunking cannot quietly
-drop or duplicate a log.
-
-**The cursor only moves forward.** `advanceCursor` uses `GREATEST`, so a stale
-or out-of-order result cannot rewind the indexer and cause a range to be
-credited twice. Rewinding after a reorg is a separate, deliberate operation,
-which is what P4 adds. A missing cursor resumes from a configured start block
-rather than from "now" -- the latter would silently skip every deposit that
-arrived while the indexer was down.
-
-**Each transfer carries its block hash.** Not needed to credit a deposit, but
-required to notice later that the block it arrived in is no longer on the
-canonical chain.
-
-**A deposit takes two steps, and the split is the point.** While its block can
-still be reorganised away the money sits in the `PENDING_DEPOSITS` system
-account and the user's balance does not move. Only once the block is final is
-it released to them. So a balance always means "spendable", and undoing a
-reorged deposit never has to claw funds back from someone who already spent
-them.
-
-**The chain supplies the idempotency key.** A log's `(transactionHash,
-logIndex)` is unique by definition, so rescanning a range -- which happens on
-every restart -- cannot credit the same transfer twice. No key has to be
-invented for it.
-
-**Finality is configurable because devnets have none.** `finalized` is correct
-on a real network. anvil pins its `finalized` tag to genesis forever, so a
-devnet must count confirmations instead or nothing would ever be credited. The
-default is the safe one, and a devnet opts out explicitly.
-
-**The cursor advances only after a range is recorded.** Advancing first and
-crashing would skip those deposits permanently. Recording first and crashing
-merely rescans, which is harmless. At-least-once is the only safe direction to
-fail in.
-
-## What P2 demonstrates
-
-**The server derives addresses it cannot spend from.** `./wallet keygen` runs
-offline and is the only code that ever holds a private key. It prints a
-mnemonic once, writes nothing to disk, and emits the extended *public* key at
-`m/44'/60'/0'/0`. Only that xpub is deployed. `loadWatchOnlyKey` refuses an
-xprv and refuses a key at the wrong depth, so a misconfiguration fails at
-startup instead of quietly granting spending authority.
-
-**Addresses are checked against an independent source.** The tests derive from
-the public Foundry mnemonic and compare against the addresses anvil prints in
-its own startup banner. That matters because the two ways to get this wrong --
-passing a compressed public key to `publicKeyToAddress`, or deriving from the
-wrong depth -- both produce valid-looking addresses that nobody holds keys to.
-Only comparison against a known vector catches them.
-
-**Indices come from a sequence, not `MAX(index) + 1`.** `nextval` is safe under
-concurrency without taking a lock. The alternative would hand two simultaneous
-signups the same address, silently merging two users' deposits into one
-balance. A test creates 25 accounts at once and asserts every index and address
-is distinct.
-
-## What P1 demonstrates
-
-**Double-entry.** Money never changes, it only moves. Every transaction writes at
-least two entries summing to zero, so `SUM(amount)` across the entire ledger is
-always zero. `postEntries` is the single door money passes through, and it
-rejects any set of postings that does not balance.
-
-**Row-level locking.** `services/api/src/ledger/postings.ts` locks accounts with
-`SELECT ... FOR UPDATE` in ascending id order. The ordering is what prevents a
-deadlock when A pays B while B pays A.
-
-**Idempotency.** Retrying a request with the same `Idempotency-Key` returns the
-stored result instead of moving money twice. Correctness comes from the `UNIQUE`
-constraint on `transactions.idempotency_key`, not from checking whether the key
-exists first -- that check would itself be racy.
-
-**Tests that would fail if the locking were removed.** In
-`ledger/concurrency.test.ts`, the interleaving test drives two transactions by
-hand and waits on `pg_stat_activity` until the second is provably parked on a
-lock before committing the first. Removing `FOR UPDATE` fails it every run. The
-20-parallel-withdrawal test is kept as the headline acceptance check, but it is
-timing-dependent and can pass even against broken code -- which is exactly why
-the deterministic one exists.
-
-## Layout
-
-```
-contracts/          Foundry: devnet mock token now; vault and smart account from P7
-db/migrations/      SQL migrations, applied in filename order
-docker/             Dockerfiles for the Node and Foundry toolchains
-packages/shared/    Shared config, chain definitions, money helpers
-services/api/       REST API
-  src/db/           Connection pool and the migration runner
-  src/ledger/       Double-entry core, idempotency, operations
-  src/routes/       HTTP layer
-  src/wallet/       Offline key generation (never runs in the server)
-  src/chain/        Log scanning, the cursor, finality and the indexer loop
-wallet              Task runner -- the entry point for everything
-```
-
-## Notes on the setup
+### Notes
 
 **Money is never a float.** Balances are integers in minor units, stored as
 `BIGINT` and parsed into JavaScript `BigInt`. Amounts cross the HTTP boundary as
@@ -1210,34 +181,33 @@ precision above 2^53.
 
 **Two Postgres traps this codebase hits.** `node-postgres` returns `BIGINT` as a
 string, so `pool.ts` installs an int8 parser; and `SUM()` over `BIGINT` returns
-`NUMERIC`, which that parser does not cover, so the reconciliation queries cast
-back with `::BIGINT`. Both produce wrong answers rather than errors.
+`NUMERIC`, which that parser does not cover, so queries cast back with
+`::BIGINT` or parse the string. Both produce wrong answers rather than errors.
 
-**No build step.** Node 26 strips TypeScript types at runtime, so `tsc` is only
-a type checker here and there is no bundler or `dist/`. `erasableSyntaxOnly` is
-enabled so the compiler rejects syntax that runtime stripping cannot handle
-(enums, namespaces, parameter properties) rather than letting it fail in
-production.
+**No build step on the backend.** Node 26 strips TypeScript types at runtime,
+so `tsc` only checks types and the services have no `dist/`.
+`erasableSyntaxOnly` rejects syntax that stripping cannot handle (enums,
+namespaces, parameter properties). The frontend is the one thing Vite builds.
 
-**Container users are uid 1000.** Both the `node` and `foundry` images run as
-uid 1000, matching the host user, so bind-mounted files keep their ownership
-instead of turning up root-owned.
+**Container users are uid 1000**, matching a typical host user, so
+bind-mounted files keep their ownership.
 
-**Fixed dependency versions live in the lockfile**, and `solc` is pinned in
-`contracts/foundry.toml` so bytecode is reproducible.
+**Versions are pinned:** dependencies in the lockfile, `solc` in
+`contracts/foundry.toml`, and the bundlers, geth, Slither and Playwright by
+image digest. Postgres, Node and Foundry are pinned only by tag -- Foundry's
+`latest` least of all -- which is worth tightening.
 
-## Secrets
+### Secrets
 
-`.env` is gitignored and holds local development defaults only. No private key,
-mnemonic or API key ever belongs in this repository.
+`.env` and `.env.demo` are gitignored. No private key, mnemonic or API key ever
+belongs in this repository; the demo's keys are generated on every
+`./wallet demo up` and live only in `.env.demo`.
 
-`WALLET_XPUB` is an extended *public* key and is safe to deploy: it derives
-deposit addresses and cannot move funds. The default in `.env.example` belongs
-to the public Foundry test mnemonic. Generate your own with `./wallet keygen`,
-and keep the mnemonic it prints offline -- it is never written to disk, and
-losing it loses the funds. The anvil mnemonic in
-`docker-compose.yml` is the well-known public Foundry test mnemonic and controls
-nothing of value.
+`WALLET_XPUB` is an extended *public* key: it derives deposit addresses and
+cannot move funds. The default in `.env.example`, and the anvil mnemonic in
+`docker-compose.yml`, belong to the public Foundry test mnemonic and control
+nothing of value. Generate your own with `./wallet keygen` and keep the
+mnemonic it prints offline -- it is never written to disk.
 
-Production key material belongs in a KMS or HSM. See the key management section
-in [PROJECT.md](PROJECT.md).
+Production key material belongs in a KMS or HSM; see the
+[threat model](docs/threat-model.md#known-gaps).
