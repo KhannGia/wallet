@@ -99,14 +99,13 @@ contract GuardianModule is EIP712 {
         }
         delete _guardians[account];
 
+        // Read once, not once per guardian: it cannot change during this call.
+        address owner = SmartAccount(payable(account)).owner();
         for (uint256 i; i < newGuardians.length; ++i) {
             address guardian = newGuardians[i];
             // The account cannot vouch for itself, and an owner who is also a
             // guardian would count towards replacing their own lost key.
-            if (
-                guardian == address(0) || guardian == account
-                    || guardian == SmartAccount(payable(account)).owner()
-            ) {
+            if (guardian == address(0) || guardian == account || guardian == owner) {
                 revert InvalidGuardian(guardian);
             }
             if (isGuardian[account][guardian]) revert DuplicateGuardian(guardian);
