@@ -47,7 +47,6 @@ body {
     background-image:
         linear-gradient(90deg, transparent 0, transparent 54px, var(--margin) 54px, var(--margin) 55px, transparent 55px),
         repeating-linear-gradient(180deg, transparent 0, transparent 31px, var(--rule) 31px, var(--rule) 32px);
-    background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
 }
 

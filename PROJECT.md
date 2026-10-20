@@ -5,7 +5,7 @@ transfers, on-chain settlement for deposits and withdrawals, an M-of-N multi-sig
 vault for reserves, and ERC-4337 smart accounts so users can graduate to real
 self-custody without the risk of losing a seed phrase.
 
-**Status:** P0–P15 complete; P16 (frontend, threat model, security review) next. See [Roadmap](#part-iii--roadmap).
+**Status:** P0–P16 complete: the roadmap below is done. Start with the [README](README.md); how each phase went is in [docs/phases](docs/phases/README.md).
 
 ---
 
@@ -250,27 +250,32 @@ anyone else's.
 
 ### II.4 Repository layout
 
+As built. The plan had a service per concern; in the end each worker is an
+entry point in one Node workspace, sharing its database code, and runs as its
+own process with its own key.
+
 ```
 wallet/
-|-- contracts/                  # Foundry
+|-- contracts/
 |   |-- src/
-|   |   |-- vault/MultisigVault.sol
-|   |   |-- account/SmartAccount.sol      # IAccount
-|   |   |-- account/AccountFactory.sol    # CREATE2
-|   |   |-- account/GuardianModule.sol    # social recovery
-|   |   |-- account/SessionKeyModule.sol
-|   |   +-- paymaster/VerifyingPaymaster.sol
-|   +-- test/                             # includes deliberate attack tests
-|-- services/
-|   |-- api/                    # REST, JWT, ledger
-|   |-- indexer/                # block scanning, reorg handling
-|   |-- withdrawal/             # nonce manager
-|   |-- paymaster/              # sponsorship policy + signing
-|   |-- vault-signer/           # EIP-712 signature collection
-|   +-- reserves/               # proof of reserves job
-|-- packages/shared/            # ABIs, types, chain config
+|   |   |-- vault/MultisigVault.sol          # M-of-N, EIP-712, timelock, fast path
+|   |   |-- aa/SmartAccount.sol              # IAccount + sessions + recovery hook
+|   |   |-- aa/AccountFactory.sol            # CREATE2, deployable only via the EntryPoint
+|   |   |-- aa/VerifyingPaymaster.sol        # signed sponsorships
+|   |   |-- aa/GuardianModule.sol            # social recovery, 48h delay
+|   |   +-- reserves/ReservesRegistry.sol    # append-only proof-of-reserves roots
+|   +-- test/                                # *.attacks.t.sol among them
+|-- services/api/src/
+|   |-- auth/  ledger/  routes/              # the API: sign-in, the ledger, HTTP
+|   |-- chain/                               # indexer, reorgs, payouts, sweeper, rebalancing
+|   |-- vault/                               # proposals and the submitter
+|   |-- aa/                                  # paymaster, recovery relayer, session manager
+|   |-- graduation/                          # custody to self-custody
+|   +-- reserves/                            # snapshots, proofs, publisher
+|-- packages/shared/                         # env, HD keys, smart-account client, Merkle sum tree
+|-- web/                                     # the frontend and its Playwright tests
 |-- db/migrations/
-+-- web/
++-- docs/                                    # phases, threat model, security review
 ```
 
 ---
@@ -332,9 +337,9 @@ demonstrable.
 
 | Phase   | Work                                                                                                                                                       | Demo                                                          | Days |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---- |
-| **P14** | **Graduation flow** — "upgrade to self-custody": deploy a SmartAccount via the factory, transfer funds on-chain from vault/hot, write the liability-reducing ledger entry, and handle a failed on-chain transfer by rolling the ledger back correctly | One button moves a user from Tier 1 to Tier 2 with real ownership transfer | 5 |
-| **P15** | Proof of Reserves: compare `balanceOf(hot) + balanceOf(vault)` against total liabilities; Merkle tree of user balances, published root, per-user proof endpoint | A user independently verifies their balance is in the published total | 4 |
-| **P16** | Frontend, README, architecture diagram, threat model, security review pass over the contracts                                                                | A stranger understands the repo in five minutes                | 5    |
+| ~~**P14**~~ | **Graduation flow** — "upgrade to self-custody": deploy a SmartAccount via the factory, transfer funds on-chain from vault/hot, write the liability-reducing ledger entry, and handle a failed on-chain transfer by rolling the ledger back correctly | Done: activated first with guardians, gas sponsored; funded through the payout pipeline; a failed transfer refunded in full; no platform key can move the funds | 5 |
+| ~~**P15**~~ | Proof of Reserves: compare `balanceOf(hot) + balanceOf(vault)` against total liabilities; Merkle tree of user balances, published root, per-user proof endpoint | Done: reserves read at the indexer's block, a Merkle sum tree with per-user salts, roots published to an append-only registry and verified against it | 4 |
+| ~~**P16**~~ | Frontend, README, architecture diagram, threat model, security review pass over the contracts                                                                | Done: sign-in and per-account ownership, a frontend for every flow tested end to end, Slither and a manual review, a STRIDE threat model, a README for strangers | 5    |
 
 ### Timeline
 
