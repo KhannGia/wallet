@@ -108,8 +108,12 @@ PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72
 # The frontend's end-to-end tests, against the running demo stack, from inside
 # its network so they reach the services by name.
 run_e2e() {
+    # The operator's token, for the vault tests. Handed over in the
+    # environment rather than read from .env.demo inside the container, which
+    # may run as a user that cannot read the file.
+    E2E_ADMIN_TOKEN=$(sed -n 's/^API_ADMIN_TOKEN=//p' .env.demo) \
     docker run --rm --network wallet-demo_default \
-        --user "${E2E_USER:-$(id -u):$(id -g)}" -e HOME=/tmp -e CI="${CI:-}" \
+        --user "${E2E_USER:-$(id -u):$(id -g)}" -e HOME=/tmp -e CI="${CI:-}" -e E2E_ADMIN_TOKEN \
         -v "$PWD:/app" \
         -v wallet-demo_node_modules_root:/app/node_modules \
         -v wallet-demo_node_modules_web:/app/web/node_modules \
@@ -128,6 +132,11 @@ demo_up() {
     "${DEMO[@]}" up -d --wait entrypoint-setup bundler
     "${DEMO[@]}" run --rm node-tools "npm run migrate --workspace @wallet/api"
     "${DEMO[@]}" run --rm node-tools "node services/api/src/demo/bootstrap-cli.ts"
+    # The bootstrap writes it as the container's user, readable by that user
+    # alone. Compose reads it on the host, as whoever runs this -- the same
+    # uid on a developer's machine, another on a CI runner -- so hand it over,
+    # still readable by its owner only.
+    "${DEMO[@]}" run --rm --no-deps --user root node-tools "chown $(id -u):$(id -g) /app/.env.demo"
     # shellcheck disable=SC2086
     "${DEMO[@]}" --env-file .env.demo --profile demo up -d --wait $DEMO_SERVICES
     echo "demo running: http://localhost:$(sed -n 's/^WEB_PORT=//p' docker/demo.env)"
