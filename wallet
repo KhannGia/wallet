@@ -101,6 +101,9 @@ run_backend_tests() {
 DEMO=(docker compose -p wallet-demo --env-file docker/demo.env)
 DEMO_SERVICES="api web indexer withdrawer sweeper vault-submitter paymaster recovery-relayer reserves"
 
+# Slither, Trail of Bits' static analyser, pinned like every other image.
+SLITHER_IMAGE="ghcr.io/crytic/slither@sha256:89d4127ec3bfeba9725a863c58dd96b01781ff73737871dd3b07606ebc4cf16b"
+
 # Playwright's own image, with the browsers it was built against, pinned like
 # every other image here. Its version must match @playwright/test in web/.
 PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf"
@@ -170,6 +173,7 @@ Checks
                   default all
   test-forge      Run Solidity tests
   coverage        Solidity coverage for contracts under src/
+  slither         Static analysis of the contracts (triage: docs/security-review.md)
   typecheck       Type-check the whole workspace
   fmt             Format Solidity sources
   fmt-check       Verify Solidity formatting without writing
@@ -273,6 +277,14 @@ case "${1:-help}" in
             logs) "${DEMO[@]}" --env-file .env.demo --profile demo logs -f ${3:-} ;;
             *) echo "Usage: ./wallet demo up|down|logs [service]" >&2; exit 1 ;;
         esac
+        ;;
+    slither)
+        # Needs the Solidity dependencies: ./wallet install-forge.
+        docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/contracts/src:/w/src:ro" \
+            -v "$PWD/contracts/script/slither.sh:/w/slither.sh:ro" \
+            -v wallet_forge_lib:/w/lib:ro \
+            -w /w --entrypoint sh "$SLITHER_IMAGE" /w/slither.sh
         ;;
     e2e)
         shift

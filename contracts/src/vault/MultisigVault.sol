@@ -76,7 +76,7 @@ contract MultisigVault is EIP712, ReentrancyGuard {
     event Queued(uint256 indexed nonce, address indexed to, uint256 value, bytes data, uint256 eta);
     event Cancelled(uint256 indexed nonce, address indexed by);
     event DelayChanged(uint256 delay);
-    event HotWalletChanged(address hotWallet);
+    event HotWalletChanged(address indexed hotWallet);
     event DailyLimitChanged(address indexed asset, uint256 limit);
 
     error InvalidThreshold(uint256 threshold, uint256 ownerCount);
